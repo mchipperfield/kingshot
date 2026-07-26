@@ -62,26 +62,21 @@ func main() {
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		slog.Info("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
 
-		existing, err := s.ApplicationCommands(s.State.User.ID, "")
-		if err != nil {
-			logger.Log("could not fetch existing global commands for cleanup; creating commands anyway (stale commands may remain)", "error", err)
-		} else {
-			// Reconcile only the commands owned by this bot flow.
-			for _, cmd := range existing {
-				if _, ok := commandNames[cmd.Name]; !ok {
-					continue
-				}
-				if err := s.ApplicationCommandDelete(s.State.User.ID, "", cmd.ID); err != nil {
-					logger.Log("cannot delete command", "command", cmd.Name, "error", err)
-				}
-			}
-		}
-
-		for _, cmd := range commands {
-			if _, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd); err != nil {
-				logger.Log("cannot create command", "command", cmd.Name, "error", err)
-			}
-		}
+		reconcileGlobalCommands(
+			logger,
+			commands,
+			commandNames,
+			func() ([]*discordgo.ApplicationCommand, error) {
+				return s.ApplicationCommands(s.State.User.ID, "")
+			},
+			func(id, _ string) error {
+				return s.ApplicationCommandDelete(s.State.User.ID, "", id)
+			},
+			func(cmd *discordgo.ApplicationCommand) error {
+				_, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd)
+				return err
+			},
+		)
 	})
 
 	if err := session.Open(); err != nil {
@@ -125,6 +120,36 @@ func commandNameSet(commands []*discordgo.ApplicationCommand) map[string]struct{
 		names[cmd.Name] = struct{}{}
 	}
 	return names
+}
+
+func reconcileGlobalCommands(
+	logger logger,
+	commands []*discordgo.ApplicationCommand,
+	commandNames map[string]struct{},
+	fetch func() ([]*discordgo.ApplicationCommand, error),
+	deleteCommand func(id, name string) error,
+	createCommand func(*discordgo.ApplicationCommand) error,
+) {
+	existing, err := fetch()
+	if err != nil {
+		logger.Log("could not fetch existing global commands; skipping cleanup step, duplicate commands may be created", "error", err)
+	} else {
+		// Reconcile only the commands owned by this bot flow.
+		for _, cmd := range existing {
+			if _, ok := commandNames[cmd.Name]; !ok {
+				continue
+			}
+			if err := deleteCommand(cmd.ID, cmd.Name); err != nil {
+				logger.Log("cannot delete command", "command", cmd.Name, "error", err)
+			}
+		}
+	}
+
+	for _, cmd := range commands {
+		if err := createCommand(cmd); err != nil {
+			logger.Log("cannot create command", "command", cmd.Name, "error", err)
+		}
+	}
 }
 
 func dotEnvParser(r io.Reader, set func(name, value string) error) error {

@@ -64,7 +64,7 @@ func main() {
 
 		existing, err := s.ApplicationCommands(s.State.User.ID, "")
 		if err != nil {
-			logger.Log("could not fetch existing global commands for cleanup; creating commands anyway", "error", err)
+			logger.Log("could not fetch existing global commands for cleanup; creating commands anyway (stale commands may remain)", "error", err)
 		} else {
 			// Reconcile only the commands owned by this bot flow.
 			for _, cmd := range existing {

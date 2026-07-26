@@ -62,7 +62,7 @@ type PlayerStore interface {
 ```go
 store := csvstore.New(*playerIDFile)
 svc   := kingshot.New(store, activeCodeList...)
-discord.Register(session, svc, *giftCodeChannelID)
+discord.Register(session, svc)
 commands := discord.GiftCodeCommands()
 ```
 
@@ -75,7 +75,6 @@ Create a `.env` file in the project root:
 
 ```
 bot_token=YOUR_DISCORD_BOT_TOKEN
-gift_code_channel_id=SOME_CHANNEL_ID
 player_id_file=player_ids.csv       # optional, defaults to player_ids.csv
 active_codes=CODE1,CODE2            # optional pre-loaded codes
 ```

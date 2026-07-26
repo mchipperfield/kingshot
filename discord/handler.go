@@ -6,16 +6,14 @@ package discord
 import (
 	"fmt"
 	"log/slog"
-	"regexp"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
 )
 
-// Register adds the KingShot interaction and message handlers to s once at startup.
-func Register(s *discordgo.Session, svc *kingshot.GiftCodeService, giftCodeChannelID string) {
+// Register adds the KingShot interaction handler to s once at startup.
+func Register(s *discordgo.Session, svc *kingshot.GiftCodeService) {
 	s.AddHandler(InteractionHandler(svc))
-	s.AddHandler(MessageHandler(svc, giftCodeChannelID))
 }
 
 // GiftCodeCommands returns the slash command definitions for the KingShot gift
@@ -102,46 +100,5 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	formatted := formatCodeResult(result)
 	for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
-	}
-}
-
-// MessageHandler returns a handler that watches channelID for bot-posted gift
-// codes and triggers automatic redemption. Register once at startup.
-func MessageHandler(svc *kingshot.GiftCodeService, channelID string) func(s *discordgo.Session, m *discordgo.MessageCreate) {
-	codeRegex := regexp.MustCompile(`Gift Code: ([A-Z0-9]+)`)
-
-	return func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		if !m.Author.Bot || m.ChannelID != channelID || m.Type != discordgo.MessageTypeDefault {
-			return
-		}
-
-		slog.Info("followed channel message received", "author", m.Author.Username)
-
-		matches := codeRegex.FindStringSubmatch(m.Content)
-		if len(matches) < 2 {
-			slog.Info("no gift code found in message content")
-			return
-		}
-
-		newCode := matches[1]
-		slog.Info("extracted gift code", "code", newCode)
-
-		thinkingMsg, err := s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Processing new gift code: `%s`...", newCode))
-		if err != nil {
-			slog.Error("failed to send thinking message", "error", err)
-		}
-
-		result := svc.ProcessNewCode(newCode)
-		formatted := formatCodeResult(result)
-
-		if thinkingMsg != nil {
-			_, err := s.ChannelMessageEdit(thinkingMsg.ChannelID, thinkingMsg.ID, formatted)
-			if err != nil {
-				slog.Error("failed to edit message with result", "error", err)
-				s.ChannelMessageSend(m.ChannelID, formatted)
-			}
-		} else {
-			s.ChannelMessageSend(m.ChannelID, formatted)
-		}
 	}
 }

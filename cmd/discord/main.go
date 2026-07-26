@@ -22,10 +22,9 @@ func main() {
 
 	fs := flag.NewFlagSet("", flag.ContinueOnError)
 	var (
-		token             = fs.String("bot_token", "", "bot authentication token")
-		playerIDFile      = fs.String("player_id_file", "player_ids.csv", "file to store player IDs")
-		activeCodes       = fs.String("active_codes", "PICNIC2026,AJISAI26JP,Kingshot888,VIP777", "comma-separated active gift codes")
-		giftCodeChannelID = fs.String("gift_code_channel_id", "", "channel ID to listen for gift codes in")
+		token        = fs.String("bot_token", "", "bot authentication token")
+		playerIDFile = fs.String("player_id_file", "player_ids.csv", "file to store player IDs")
+		activeCodes  = fs.String("active_codes", "PICNIC2026,AJISAI26JP,Kingshot888,VIP777", "comma-separated active gift codes")
 	)
 
 	if err := ff.Parse(fs,
@@ -42,10 +41,6 @@ func main() {
 		logger.Log("failed to validate configuration", "error", "bot_token is required")
 		os.Exit(1)
 	}
-	if *giftCodeChannelID == "" {
-		logger.Log("failed to validate configuration", "error", "gift_code_channel_id is required")
-		os.Exit(1)
-	}
 
 	session, err := discordgo.New("Bot " + *token)
 	if err != nil {
@@ -56,7 +51,7 @@ func main() {
 	activeCodeList := parseActiveCodes(*activeCodes)
 
 	svc := kingshot.New(csvstore.New(*playerIDFile), activeCodeList...)
-	discord.Register(session, svc, *giftCodeChannelID)
+	discord.Register(session, svc)
 
 	commands := discord.GiftCodeCommands()
 	commandNames := commandNameSet(commands)

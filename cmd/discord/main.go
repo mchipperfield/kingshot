@@ -37,11 +37,11 @@ func main() {
 	}
 
 	if *token == "" {
-		logger.Log("bot_token must be provided")
+		logger.Log("failed to validate configuration", "error", "bot_token is required")
 		os.Exit(1)
 	}
 	if *giftCodeChannelID == "" {
-		logger.Log("gift_code_channel_id must be provided")
+		logger.Log("failed to validate configuration", "error", "gift_code_channel_id is required")
 		os.Exit(1)
 	}
 
@@ -51,22 +51,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	var initialCodes []string
-	for _, code := range strings.Split(*activeCodes, ",") {
-		code = strings.TrimSpace(code)
-		if code == "" {
-			continue
-		}
-		initialCodes = append(initialCodes, code)
-	}
+	initialCodes := parseActiveCodes(*activeCodes)
 
 	ks := kingshot.NewKingShot(*playerIDFile, initialCodes...)
 	ks.Register(session, *giftCodeChannelID)
 
-	commandNames := map[string]struct{}{}
-	for _, cmd := range ks.GiftCodeCommands() {
-		commandNames[cmd.Name] = struct{}{}
-	}
+	commands := ks.GiftCodeCommands()
+	commandNames := commandNameSet(commands)
 
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		slog.Info("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
@@ -74,19 +65,18 @@ func main() {
 		existing, err := s.ApplicationCommands(s.State.User.ID, "")
 		if err != nil {
 			logger.Log("could not fetch existing global commands", "error", err)
-			return
+		} else {
+			for _, cmd := range existing {
+				if _, ok := commandNames[cmd.Name]; !ok {
+					continue
+				}
+				if err := s.ApplicationCommandDelete(s.State.User.ID, "", cmd.ID); err != nil {
+					logger.Log("cannot delete command", "command", cmd.Name, "error", err)
+				}
+			}
 		}
 
-		for _, cmd := range existing {
-			if _, ok := commandNames[cmd.Name]; !ok {
-				continue
-			}
-			if err := s.ApplicationCommandDelete(s.State.User.ID, "", cmd.ID); err != nil {
-				logger.Log("cannot delete command", "command", cmd.Name, "error", err)
-			}
-		}
-
-		for _, cmd := range ks.GiftCodeCommands() {
+		for _, cmd := range commands {
 			if _, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd); err != nil {
 				logger.Log("cannot create command", "command", cmd.Name, "error", err)
 			}
@@ -114,6 +104,26 @@ type logger struct {
 func (l logger) Log(msg string, keyvals ...any) error {
 	l.Logger.Info(msg, keyvals...)
 	return nil
+}
+
+func parseActiveCodes(codes string) []string {
+	var active []string
+	for _, code := range strings.Split(codes, ",") {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		active = append(active, code)
+	}
+	return active
+}
+
+func commandNameSet(commands []*discordgo.ApplicationCommand) map[string]struct{} {
+	names := make(map[string]struct{}, len(commands))
+	for _, cmd := range commands {
+		names[cmd.Name] = struct{}{}
+	}
+	return names
 }
 
 func dotEnvParser(r io.Reader, set func(name, value string) error) error {

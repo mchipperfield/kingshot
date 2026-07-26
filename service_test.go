@@ -525,8 +525,6 @@ func TestEndToEnd_RedeemWithKID(t *testing.T) {
 	})
 }
 
-
-
 // isHex returns true if s contains only hex characters.
 func isHex(s string) bool {
 	for _, c := range s {

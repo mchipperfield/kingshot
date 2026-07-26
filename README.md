@@ -1,6 +1,19 @@
-# discordbot
+# kingshot
 
-Experimenting with the discordgo package to create a discord bot.
+Discord bot tooling for KingShot gift code registration and redemption.
 
-// ffmpeg -i test.mp3 -f s16le -ar 48000 -ac 2 pipe:1 | dca > test.dca
-Convert to .dca file.
+## Binary layout
+
+- `cmd/discord` — Discord entrypoint that registers global `/register` and `/code` commands and processes gift codes via the KingShot API.
+
+## Run
+
+```bash
+go run ./cmd/discord
+```
+
+Configuration is read from flags or `.env`:
+
+- `bot_token` (required)
+- `gift_code_channel_id` (required)
+- `player_id_file` (optional, defaults to `player_ids.csv`)

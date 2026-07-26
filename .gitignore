@@ -28,7 +28,6 @@ go.work.sum
 .pem
 
 # binaries
-/cmd
 
 # gcloud files
 .gcloudignore

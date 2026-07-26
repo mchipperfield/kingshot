@@ -51,8 +51,9 @@ func (s *Store) FindByPlayerID(playerID string) (externalID string, found bool, 
 	return "", false, nil
 }
 
-// AddPlayer appends a new playerID → externalID row. It reads all existing
-// records and rewrites the file so that each playerID appears at most once.
+// AddPlayer appends a new playerID → externalID row to the file.
+// The caller (GiftCodeService) is responsible for calling FindByPlayerID first
+// to ensure a playerID is not registered more than once.
 func (s *Store) AddPlayer(playerID, externalID string) error {
 	records, err := s.readAll()
 	if err != nil {

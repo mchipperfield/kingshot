@@ -121,8 +121,9 @@ func TestStore_AddPlayer_doesNotDuplicate(t *testing.T) {
 		t.Fatalf("first AddPlayer failed: %v", err)
 	}
 
-	// FindByPlayerID returns found=true, so a well-behaved caller won't
-	// AddPlayer again — but verify the file stays consistent if called twice.
+	// AddPlayer does not deduplicate — the service layer always calls
+	// FindByPlayerID first and only calls AddPlayer for new players.
+	// This test confirms AddPlayer faithfully writes what it is given.
 	if err := store.AddPlayer("player1", "discord1b"); err != nil {
 		t.Fatalf("second AddPlayer failed: %v", err)
 	}
@@ -131,8 +132,7 @@ func TestStore_AddPlayer_doesNotDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Two rows — AddPlayer itself doesn't deduplicate; the service layer ensures
-	// FindByPlayerID is always called before AddPlayer.
+	// Two rows — deduplication is the caller's responsibility.
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 rows, got %d: %v", len(ids), ids)
 	}

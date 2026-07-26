@@ -41,7 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *giftCodeChannelID == "" {
-		logger.Log("failed to validate configuration", "error", "gift_code_channel_id flag is required")
+		logger.Log("failed to validate configuration", "error", "gift_code_channel_id is required")
 		os.Exit(1)
 	}
 
@@ -64,7 +64,7 @@ func main() {
 
 		existing, err := s.ApplicationCommands(s.State.User.ID, "")
 		if err != nil {
-			logger.Log("could not fetch existing global commands; continuing without cleanup", "error", err)
+			logger.Log("could not fetch existing global commands for cleanup; creating commands anyway", "error", err)
 		} else {
 			// Reconcile only the commands owned by this bot flow.
 			for _, cmd := range existing {

@@ -17,47 +17,47 @@ import (
 // mapStore is an in-memory PlayerStore for testing.
 type mapStore struct {
 	mu      sync.Mutex
-	players map[string]string // playerID → externalID
+	players map[string]Player // playerID → Player
 }
 
-func newMapStore(initial map[string]string) *mapStore {
-	players := make(map[string]string)
+func newMapStore(initial map[string]Player) *mapStore {
+	players := make(map[string]Player)
 	for k, v := range initial {
 		players[k] = v
 	}
 	return &mapStore{players: players}
 }
 
-func (m *mapStore) PlayerIDs() ([]string, error) {
+func (m *mapStore) Players() ([]Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ids := make([]string, 0, len(m.players))
-	for id := range m.players {
-		ids = append(ids, id)
+	result := make([]Player, 0, len(m.players))
+	for _, p := range m.players {
+		result = append(result, p)
 	}
-	return ids, nil
+	return result, nil
 }
 
-func (m *mapStore) FindByPlayerID(playerID string) (string, bool, error) {
+func (m *mapStore) FindByPlayerID(playerID string) (Player, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id, found := m.players[playerID]
-	return id, found, nil
+	p, found := m.players[playerID]
+	return p, found, nil
 }
 
-func (m *mapStore) AddPlayer(playerID, externalID string) error {
+func (m *mapStore) AddPlayer(player Player) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.players[playerID] = externalID
+	m.players[player.ID] = player
 	return nil
 }
 
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
-func (e *errStore) PlayerIDs() ([]string, error)                { return nil, e.err }
-func (e *errStore) FindByPlayerID(string) (string, bool, error) { return "", false, e.err }
-func (e *errStore) AddPlayer(string, string) error              { return e.err }
+func (e *errStore) Players() ([]Player, error)                        { return nil, e.err }
+func (e *errStore) FindByPlayerID(string) (Player, bool, error)       { return Player{}, false, e.err }
+func (e *errStore) AddPlayer(Player) error                            { return e.err }
 
 // mockKingShotAPI starts an httptest server for /player (login) and
 // /gift_code (redeem), and returns a GiftCodeService wired to it.
@@ -271,6 +271,7 @@ func TestInterpretRedeemResult(t *testing.T) {
 		{ErrCodeNotFound, "Code is not valid.", false, true, false},
 		{ErrCodeLogin, "Unable to login.", false, false, true},
 		{ErrCodeLimitReached, "Redemption Limit Reached", false, false, false},
+		{ErrCodeUserDetails, "User details incorrect.", false, false, true},
 		{"99999", "Failed to redeem code.", false, false, false},
 	}
 	for _, tt := range tests {
@@ -391,12 +392,14 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		{"success", ErrCodeSuccess, "Successfully redeemed!"},
 		{"already claimed", ErrCodeClaimed, "Already claimed."},
 		{"login error from api", ErrCodeLogin, "Unable to login."},
+		{"user details incorrect", ErrCodeUserDetails, "User details incorrect."},
 		{"unknown error code", "99999", "Failed to redeem code."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := mockKingShotAPI(t, 0, tt.redeemErrCode)
-			got := svc.redeemForPlayer("player1", "TESTCODE")
+			p := Player{ID: "player1", KID: "kingdom1"}
+			got := svc.redeemForPlayer(p, "TESTCODE")
 			if got != tt.wantMsg {
 				t.Errorf("got %q, want %q", got, tt.wantMsg)
 			}
@@ -414,14 +417,115 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 			client:    srv.Client(),
 			store:     newMapStore(nil),
 		}
-		got := svc.redeemForPlayer("player1", "TESTCODE")
+		p := Player{ID: "player1", KID: "kingdom1"}
+		got := svc.redeemForPlayer(p, "TESTCODE")
 		if got != "Failed to login." {
 			t.Errorf("got %q, want %q", got, "Failed to login.")
 		}
 	})
 }
 
-// --- Helpers -----------------------------------------------------------------
+// --- End-to-end tests --------------------------------------------------------
+
+// TestEndToEnd_RedeemWithKID verifies the full login → redeem sequence,
+// confirming that:
+//  1. The /player (login) endpoint is called before /gift_code (redeem).
+//  2. The redeem request includes the kid field for the player.
+//  3. A 40020 (user details incorrect) response from the API is handled as a
+//     login failure — covering the case where playerID or kid is invalid.
+func TestEndToEnd_RedeemWithKID(t *testing.T) {
+	const playerID = "player1"
+	const kingdomID = "kingdom99"
+	const giftCode = "GIFTCODE2025"
+
+	t.Run("login called before redeem, kid included in request", func(t *testing.T) {
+		var mu sync.Mutex
+		var callOrder []string
+		var capturedRedeemBody map[string]string
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/player":
+				mu.Lock()
+				callOrder = append(callOrder, "login")
+				mu.Unlock()
+				json.NewEncoder(w).Encode(LoginResponse{Code: 0})
+			case "/gift_code":
+				mu.Lock()
+				callOrder = append(callOrder, "redeem")
+				if err := json.NewDecoder(r.Body).Decode(&capturedRedeemBody); err != nil {
+					t.Errorf("failed to decode redeem body: %v", err)
+				}
+				mu.Unlock()
+				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeSuccess)})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{
+			loginURL:  srv.URL + "/player",
+			redeemURL: srv.URL + "/gift_code",
+			client:    srv.Client(),
+			store:     newMapStore(nil),
+		}
+
+		p := Player{ID: playerID, KID: kingdomID}
+		got := svc.redeemForPlayer(p, giftCode)
+
+		if got != "Successfully redeemed!" {
+			t.Errorf("message = %q, want %q", got, "Successfully redeemed!")
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if len(callOrder) != 2 || callOrder[0] != "login" || callOrder[1] != "redeem" {
+			t.Errorf("call order = %v, want [login redeem]", callOrder)
+		}
+		if capturedRedeemBody["kid"] != kingdomID {
+			t.Errorf("redeem kid = %q, want %q", capturedRedeemBody["kid"], kingdomID)
+		}
+		if capturedRedeemBody["fid"] != playerID {
+			t.Errorf("redeem fid = %q, want %q", capturedRedeemBody["fid"], playerID)
+		}
+		if capturedRedeemBody["cdk"] != giftCode {
+			t.Errorf("redeem cdk = %q, want %q", capturedRedeemBody["cdk"], giftCode)
+		}
+	})
+
+	t.Run("invalid player or kingdom id returns user details error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/player":
+				json.NewEncoder(w).Encode(LoginResponse{Code: 0})
+			case "/gift_code":
+				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeUserDetails)})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{
+			loginURL:  srv.URL + "/player",
+			redeemURL: srv.URL + "/gift_code",
+			client:    srv.Client(),
+			store:     newMapStore(nil),
+		}
+
+		p := Player{ID: "badplayer", KID: "badkingdom"}
+		got := svc.redeemForPlayer(p, giftCode)
+		if got != "User details incorrect." {
+			t.Errorf("message = %q, want %q", got, "User details incorrect.")
+		}
+	})
+}
+
+
 
 // isHex returns true if s contains only hex characters.
 func isHex(s string) bool {

@@ -30,6 +30,12 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 					Description: "Your KingShot player ID",
 					Required:    true,
 				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "kingdom-id",
+					Description: "Your KingShot kingdom ID",
+					Required:    true,
+				},
 			},
 		},
 		{
@@ -73,9 +79,10 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 
 	playerID := i.ApplicationCommandData().Options[0].StringValue()
+	kid := i.ApplicationCommandData().Options[1].StringValue()
 	discordID := i.Member.User.ID
 
-	result := svc.RegisterPlayer(playerID, discordID)
+	result := svc.RegisterPlayer(playerID, kid, discordID)
 	reply(s, i, formatRegisterResult(result))
 }
 

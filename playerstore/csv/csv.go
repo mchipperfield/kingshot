@@ -1,11 +1,13 @@
 // Package csvstore provides a CSV-backed implementation of kingshot.PlayerStore.
-// Each row in the file is stored as "playerID,externalID".
+// Each row in the file is stored as "playerID,externalID,kid".
 package csvstore
 
 import (
 	"encoding/csv"
 	"io"
 	"os"
+
+	"github.com/mchipperfield/kingshot"
 )
 
 // Store is a CSV-backed PlayerStore. It is not safe for concurrent use without
@@ -21,45 +23,53 @@ func New(path string) *Store {
 	return &Store{path: path}
 }
 
-// PlayerIDs returns all registered player IDs in file order.
-func (s *Store) PlayerIDs() ([]string, error) {
+// Players returns all registered players in file order.
+func (s *Store) Players() ([]kingshot.Player, error) {
 	records, err := s.readAll()
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(records))
+	players := make([]kingshot.Player, 0, len(records))
 	for _, record := range records {
-		if len(record) >= 1 {
-			ids = append(ids, record[0])
+		if len(record) >= 3 {
+			players = append(players, kingshot.Player{
+				ID:         record[0],
+				ExternalID: record[1],
+				KID:        record[2],
+			})
 		}
 	}
-	return ids, nil
+	return players, nil
 }
 
-// FindByPlayerID looks up the external ID for playerID.
+// FindByPlayerID looks up the player record for playerID.
 // found is false if the player is not registered.
-func (s *Store) FindByPlayerID(playerID string) (externalID string, found bool, err error) {
+func (s *Store) FindByPlayerID(playerID string) (kingshot.Player, bool, error) {
 	records, err := s.readAll()
 	if err != nil {
-		return "", false, err
+		return kingshot.Player{}, false, err
 	}
 	for _, record := range records {
-		if len(record) >= 2 && record[0] == playerID {
-			return record[1], true, nil
+		if len(record) >= 3 && record[0] == playerID {
+			return kingshot.Player{
+				ID:         record[0],
+				ExternalID: record[1],
+				KID:        record[2],
+			}, true, nil
 		}
 	}
-	return "", false, nil
+	return kingshot.Player{}, false, nil
 }
 
-// AddPlayer appends a new playerID → externalID row to the file.
+// AddPlayer appends a new player record to the file.
 // The caller (GiftCodeService) is responsible for calling FindByPlayerID first
 // to ensure a playerID is not registered more than once.
-func (s *Store) AddPlayer(playerID, externalID string) error {
+func (s *Store) AddPlayer(player kingshot.Player) error {
 	records, err := s.readAll()
 	if err != nil {
 		return err
 	}
-	records = append(records, []string{playerID, externalID})
+	records = append(records, []string{player.ID, player.ExternalID, player.KID})
 	return s.writeAll(records)
 }
 

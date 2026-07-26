@@ -29,6 +29,7 @@ const (
 	ErrCodeNotFound     = "40014"
 	ErrCodeLogin        = "40009"
 	ErrCodeLimitReached = "40005"
+	ErrCodeUserDetails  = "40020"
 )
 
 // transport is a rate-limited http.RoundTripper.
@@ -41,6 +42,13 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+// RedeemRequest holds the parameters for a single gift code redemption call.
+type RedeemRequest struct {
+	FID string // KingShot player ID
+	KID string // kingdom ID
+	CDK string // gift code
 }
 
 // redeemOutcome captures the structured result of a single redemption attempt.
@@ -67,6 +75,8 @@ func interpretRedeemResult(errCode ErrCode) redeemOutcome {
 		return redeemOutcome{msg: "Unable to login.", loginFailed: true}
 	case ErrCodeLimitReached:
 		return redeemOutcome{msg: "Redemption Limit Reached"}
+	case ErrCodeUserDetails:
+		return redeemOutcome{msg: "User details incorrect.", loginFailed: true}
 	default:
 		return redeemOutcome{msg: "Failed to redeem code."}
 	}
@@ -95,11 +105,12 @@ func (s *GiftCodeService) login(fid string) (*LoginResponse, error) {
 	return &loginResp, nil
 }
 
-// redeemGiftCode submits a redemption request for fid and cdk.
-func (s *GiftCodeService) redeemGiftCode(fid, cdk string) (*RedeemResponse, error) {
+// redeemGiftCode submits a redemption request using the parameters in req.
+func (s *GiftCodeService) redeemGiftCode(req RedeemRequest) (*RedeemResponse, error) {
 	data := map[string]string{
-		"fid":  fid,
-		"cdk":  cdk,
+		"fid":  req.FID,
+		"kid":  req.KID,
+		"cdk":  req.CDK,
 		"time": fmt.Sprintf("%d", time.Now().Unix()),
 	}
 	payload, err := EncodePayload(data)

@@ -15,15 +15,12 @@ import (
 	"github.com/peterbourgon/ff"
 )
 
-const defaultGuildID = "1423406563850190850"
-
 func main() {
 	logger := logger{slog.Default()}
 
 	fs := flag.NewFlagSet("", flag.ContinueOnError)
 	var (
 		token             = fs.String("bot_token", "", "bot authentication token")
-		guildID           = fs.String("guild_id", defaultGuildID, "guild ID to register commands in")
 		playerIDFile      = fs.String("player_id_file", "player_ids.csv", "file to store player IDs")
 		activeCodes       = fs.String("active_codes", "PICNIC2026,AJISAI26JP,Kingshot888,VIP777", "comma-separated active gift codes")
 		giftCodeChannelID = fs.String("gift_code_channel_id", "", "channel ID to listen for gift codes in")
@@ -74,9 +71,9 @@ func main() {
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		slog.Info("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
 
-		existing, err := s.ApplicationCommands(s.State.User.ID, *guildID)
+		existing, err := s.ApplicationCommands(s.State.User.ID, "")
 		if err != nil {
-			logger.Log("could not fetch existing commands", "guild", *guildID, "error", err)
+			logger.Log("could not fetch existing global commands", "error", err)
 			return
 		}
 
@@ -84,13 +81,13 @@ func main() {
 			if _, ok := commandNames[cmd.Name]; !ok {
 				continue
 			}
-			if err := s.ApplicationCommandDelete(s.State.User.ID, *guildID, cmd.ID); err != nil {
+			if err := s.ApplicationCommandDelete(s.State.User.ID, "", cmd.ID); err != nil {
 				logger.Log("cannot delete command", "command", cmd.Name, "error", err)
 			}
 		}
 
 		for _, cmd := range ks.GiftCodeCommands() {
-			if _, err := s.ApplicationCommandCreate(s.State.User.ID, *guildID, cmd); err != nil {
+			if _, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd); err != nil {
 				logger.Log("cannot create command", "command", cmd.Name, "error", err)
 			}
 		}

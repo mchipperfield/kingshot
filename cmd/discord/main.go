@@ -25,6 +25,7 @@ func main() {
 		token             = fs.String("bot_token", "", "bot authentication token")
 		guildID           = fs.String("guild_id", defaultGuildID, "guild ID to register commands in")
 		playerIDFile      = fs.String("player_id_file", "player_ids.csv", "file to store player IDs")
+		activeCodes       = fs.String("active_codes", "PICNIC2026,AJISAI26JP,Kingshot888,VIP777", "comma-separated active gift codes")
 		giftCodeChannelID = fs.String("gift_code_channel_id", "", "channel ID to listen for gift codes in")
 	)
 
@@ -53,8 +54,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	ks := kingshot.NewKingShot(*playerIDFile)
+	var initialCodes []string
+	for _, code := range strings.Split(*activeCodes, ",") {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		initialCodes = append(initialCodes, code)
+	}
+
+	ks := kingshot.NewKingShot(*playerIDFile, initialCodes...)
 	ks.Register(session, *giftCodeChannelID)
+
+	commandNames := map[string]struct{}{}
+	for _, cmd := range ks.GiftCodeCommands() {
+		commandNames[cmd.Name] = struct{}{}
+	}
 
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		slog.Info("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
@@ -66,7 +81,7 @@ func main() {
 		}
 
 		for _, cmd := range existing {
-			if cmd.Name != "register" && cmd.Name != "code" {
+			if _, ok := commandNames[cmd.Name]; !ok {
 				continue
 			}
 			if err := s.ApplicationCommandDelete(s.State.User.ID, *guildID, cmd.ID); err != nil {

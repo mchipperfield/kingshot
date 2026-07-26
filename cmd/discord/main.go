@@ -11,7 +11,9 @@ import (
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/mchipperfield/kingshot/kingshot"
+	"github.com/mchipperfield/kingshot"
+	"github.com/mchipperfield/kingshot/discord"
+	csvstore "github.com/mchipperfield/kingshot/playerstore/csv"
 	"github.com/peterbourgon/ff"
 )
 
@@ -53,10 +55,10 @@ func main() {
 
 	activeCodeList := parseActiveCodes(*activeCodes)
 
-	ks := kingshot.NewKingShot(*playerIDFile, activeCodeList...)
-	ks.Register(session, *giftCodeChannelID)
+	svc := kingshot.New(csvstore.New(*playerIDFile), activeCodeList...)
+	discord.Register(session, svc, *giftCodeChannelID)
 
-	commands := ks.GiftCodeCommands()
+	commands := discord.GiftCodeCommands()
 	commandNames := commandNameSet(commands)
 
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {

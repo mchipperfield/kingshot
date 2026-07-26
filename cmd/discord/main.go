@@ -51,9 +51,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	initialCodes := parseActiveCodes(*activeCodes)
+	activeCodeList := parseActiveCodes(*activeCodes)
 
-	ks := kingshot.NewKingShot(*playerIDFile, initialCodes...)
+	ks := kingshot.NewKingShot(*playerIDFile, activeCodeList...)
 	ks.Register(session, *giftCodeChannelID)
 
 	commands := ks.GiftCodeCommands()
@@ -66,6 +66,7 @@ func main() {
 		if err != nil {
 			logger.Log("could not fetch existing global commands", "error", err)
 		} else {
+			// Reconcile only the commands owned by this bot flow.
 			for _, cmd := range existing {
 				if _, ok := commandNames[cmd.Name]; !ok {
 					continue

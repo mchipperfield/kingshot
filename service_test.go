@@ -71,6 +71,16 @@ func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
 	return nil
 }
 
+func (m *mapStore) UpdatePlayerKingdom(playerID, newKingdomID, guildID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.players[playerID]; ok {
+		p.KingdomID = newKingdomID
+		// The mock doesn't need to track history.
+	}
+	return nil
+}
+
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
@@ -78,6 +88,7 @@ func (e *errStore) Players() ([]*Player, error)                  { return nil, e
 func (e *errStore) FindByPlayerID(string) (*Player, bool, error) { return nil, false, e.err }
 func (e *errStore) FindByUser(string) ([]*Player, error)         { return nil, e.err }
 func (e *errStore) AddPlayer(NewPlayerRequest) error                      { return e.err }
+func (e *errStore) UpdatePlayerKingdom(string, string, string) error      { return e.err }
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.
@@ -374,6 +385,81 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 	})
 }
 
+func TestGiftCodeService_TransferPlayer(t *testing.T) {
+	t.Run("successful transfer", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
+		result := svc.TransferPlayer(req)
+		if !result.Success {
+			t.Fatalf("expected success, got %+v", result)
+		}
+		if p, _, _ := store.FindByPlayerID("p1"); p.KingdomID != "k2" {
+			t.Errorf("player kingdom not updated, got %s", p.KingdomID)
+		}
+	})
+
+	t.Run("player not found, registers new player", func(t *testing.T) {
+		store := newMapStore(nil)
+		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
+		result := svc.TransferPlayer(req)
+		if !result.PlayerNotFound {
+			t.Fatalf("expected player not found, got %+v", result)
+		}
+		if result.RegistrationResult == nil {
+			t.Fatal("expected registration result, got nil")
+		}
+		if !result.RegistrationResult.Success {
+			t.Errorf("expected registration to be successful, got %+v", result.RegistrationResult)
+		}
+		if p, found, _ := store.FindByPlayerID("p1"); !found || p.UserID != "u1" {
+			t.Errorf("player not added to store correctly")
+		}
+	})
+
+	t.Run("not your player", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
+		result := svc.TransferPlayer(req)
+		if !result.NotYourPlayer {
+			t.Errorf("expected NotYourPlayer=true, got %+v", result)
+		}
+	})
+
+	t.Run("max players for new kingdom reached", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k2"},
+			"p3": {PlayerID: "p3", UserID: "u1", KingdomID: "k2"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
+		result := svc.TransferPlayer(req)
+		if !result.MaxPlayersForNewKingdomReached {
+			t.Errorf("expected MaxPlayersForNewKingdomReached=true, got %+v", result)
+		}
+	})
+
+	t.Run("transfer to same kingdom with 2 players should be allowed", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
+		result := svc.TransferPlayer(req)
+		if !result.Success {
+			t.Fatalf("expected success, got %+v", result)
+		}
+	})
+}
+
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.
 func TestGiftCodeService_concurrentAccess(t *testing.T) {
@@ -446,7 +532,9 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 
 	t.Run("redeem HTTP failure", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"code": "not an int"}`))
 		}))
 		t.Cleanup(srv.Close)
 		svc := &GiftCodeService{

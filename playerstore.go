@@ -18,4 +18,6 @@ type PlayerStore interface {
 	FindByUser(userID string) ([]*Player, error)
 	// AddPlayer stores a new player.
 	AddPlayer(req NewPlayerRequest) error
+	// UpdatePlayerKingdom updates the kingdom for a given player.
+	UpdatePlayerKingdom(playerID, newKingdomID, guildID string) error
 }

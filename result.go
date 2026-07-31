@@ -38,3 +38,18 @@ type ActiveCodeResult struct {
 	Code    string
 	Message string
 }
+
+// TransferPlayerResult is the structured outcome of a TransferPlayer call.
+type TransferPlayerResult struct {
+	PlayerID                       string
+	NewKingdomID                   string
+	UserID                         string
+	PlayerNotFound                 bool
+	NotYourPlayer                  bool
+	MaxPlayersForNewKingdomReached bool
+	StoreError                     error
+	Success                        bool
+	// RegistrationResult is populated if the player did not exist and was
+	// registered instead.
+	RegistrationResult *RegisterResult
+}

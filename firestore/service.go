@@ -15,9 +15,9 @@ type PlayerStore struct {
 }
 
 type player struct {
-	PlayerID  string `firestore:"playerID"`
-	UserID    string `firestore:"userID"`
-	KingdomID string `firestore:"kingdomID"`
+	PlayerID  string `firestore:"player_id"`
+	UserID    string `firestore:"user_id"`
+	KingdomID string `firestore:"kingdom_id"`
 }
 
 func NewPlayerStore(projectId string) (*PlayerStore, error) {

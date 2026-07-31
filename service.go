@@ -159,6 +159,12 @@ func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 	}
 }
 
+func (s *GiftCodeService) GetPlayersByUser(userID string) ([]*Player, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.FindByUser(userID)
+}
+
 // isCodeKnown reports whether code is already tracked. Caller must hold s.mu.
 func (s *GiftCodeService) isCodeKnown(code string) (active, expired bool) {
 	return slices.Contains(s.activeCodes, code), slices.Contains(s.expiredCodes, code)

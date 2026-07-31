@@ -6,6 +6,7 @@ package discord
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
@@ -43,6 +44,11 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 						},
 					},
 				},
+				{
+					Name:        "status",
+					Description: "Show your registered players",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+				},
 			},
 		},
 		{
@@ -74,6 +80,8 @@ func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session
 			switch subcommand {
 			case "register":
 				handleRegisterPlayer(s, i, svc)
+			case "status":
+				handlePlayerStatus(s, i, svc)
 			}
 		case "code":
 			handleAddCode(s, i, svc)
@@ -134,4 +142,34 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
 	}
+}
+
+func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		slog.Error("failed to defer interaction response for status", "error", err)
+		return
+	}
+
+	players, err := svc.GetPlayersByUser(i.Member.User.ID)
+	if err != nil {
+		slog.Error("failed to get players for user", "error", err, "user_id", i.Member.User.ID)
+		reply(s, i, "Error fetching your players.")
+		return
+	}
+
+	if len(players) == 0 {
+		reply(s, i, "You have no registered players.")
+		return
+	}
+
+	var builder strings.Builder
+	builder.WriteString("Your registered players:\n")
+	for _, p := range players {
+		builder.WriteString(fmt.Sprintf("- Player ID: `%s`, Kingdom ID: `%s`\n", p.PlayerID, p.KingdomID))
+	}
+
+	reply(s, i, builder.String())
 }

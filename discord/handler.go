@@ -49,6 +49,25 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 					Description: "Show your registered players",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 				},
+				{
+					Name:        "transfer",
+					Description: "Transfer a player to a new kingdom",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "player-id",
+							Description: "Your KingShot Player ID to transfer",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "new-kingdom-id",
+							Description: "The new Kingdom ID",
+							Required:    true,
+						},
+					},
+				},
 			},
 		},
 		{
@@ -82,6 +101,8 @@ func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session
 				handleRegisterPlayer(s, i, svc)
 			case "status":
 				handlePlayerStatus(s, i, svc)
+			case "transfer":
+				handleTransferPlayer(s, i, svc)
 			}
 		case "code":
 			handleAddCode(s, i, svc)
@@ -172,4 +193,34 @@ func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, sv
 	}
 
 	reply(s, i, builder.String())
+}
+
+func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		slog.Error("failed to defer interaction response for transfer", "error", err)
+		return
+	}
+
+	options := i.ApplicationCommandData().Options[0].Options
+	var playerID, newKingdomID string
+	for _, opt := range options {
+		switch opt.Name {
+		case "player-id":
+			playerID = opt.StringValue()
+		case "new-kingdom-id":
+			newKingdomID = opt.StringValue()
+		}
+	}
+
+	req := kingshot.TransferPlayerRequest{
+		PlayerID:     playerID,
+		NewKingdomID: newKingdomID,
+		UserID:       i.Member.User.ID,
+	}
+
+	result := svc.TransferPlayer(req)
+	reply(s, i, formatTransferResult(result))
 }

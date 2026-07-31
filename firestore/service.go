@@ -115,3 +115,10 @@ func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
 	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(context.Background(), internalPlayer)
 	return err
 }
+
+func (ps *PlayerStore) UpdatePlayerKingdom(playerID, newKingdomID string) error {
+	_, err := ps.Client.Collection("players").Doc(playerID).Update(context.Background(), []firestore.Update{
+		{Path: "kingdom_id", Value: newKingdomID},
+	})
+	return err
+}

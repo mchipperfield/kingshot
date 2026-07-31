@@ -138,3 +138,10 @@ type RedeemResponse struct {
 	Message string  `json:"msg"`
 	ErrCode ErrCode `json:"err_code"`
 }
+
+// TransferPlayerRequest is the input to the TransferPlayer service method.
+type TransferPlayerRequest struct {
+	PlayerID     string
+	NewKingdomID string
+	UserID       string
+}

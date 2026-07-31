@@ -94,6 +94,25 @@ func formatRegisterResult(r kingshot.RegisterResult) string {
 	return response
 }
 
+func formatTransferResult(r kingshot.TransferPlayerResult) string {
+	switch {
+	case r.StoreError != nil:
+		return "Error transferring player. Please try again later."
+	case r.NotYourPlayer:
+		return "This player is not registered to your Discord account."
+	case r.MaxPlayersForNewKingdomReached:
+		return "You have already registered the maximum number of players for the new kingdom."
+	case r.PlayerNotFound:
+		if r.RegistrationResult != nil {
+			return "Player not found. We tried to register it for you instead:\n\n" + formatRegisterResult(*r.RegistrationResult)
+		}
+		return "Player not found." // Should not happen if registration was attempted
+	case r.Success:
+		return fmt.Sprintf("Player `%s` has been successfully transferred to kingdom `%s`.", r.PlayerID, r.NewKingdomID)
+	}
+	return "An unknown error occurred during transfer."
+}
+
 // chunkMessage splits s into slices of at most maxLen characters, breaking on
 // newline boundaries where possible.
 func chunkMessage(s string, maxLen int) []string {

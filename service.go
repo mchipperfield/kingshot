@@ -107,7 +107,10 @@ type NewPlayerRequest struct {
 func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.registerPlayer(req)
+}
 
+func (s *GiftCodeService) registerPlayer(req NewPlayerRequest) RegisterResult {
 	existing, found, err := s.store.FindByPlayerID(req.PlayerID)
 	if err != nil {
 		slog.Error("failed to look up player for registration", "error", err)
@@ -159,6 +162,66 @@ func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 	}
 }
 
+func (s *GiftCodeService) TransferPlayer(req TransferPlayerRequest) TransferPlayerResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	player, found, err := s.store.FindByPlayerID(req.PlayerID)
+	if err != nil {
+		slog.Error("failed to look up player for transfer", "error", err)
+		return TransferPlayerResult{StoreError: err}
+	}
+
+	if !found {
+		// Player doesn't exist, so let's register them instead.
+		registerReq := NewPlayerRequest{
+			PlayerID:  req.PlayerID,
+			KingdomID: req.NewKingdomID,
+			UserID:    req.UserID,
+		}
+		regResult := s.registerPlayer(registerReq)
+		return TransferPlayerResult{
+			PlayerNotFound:     true,
+			RegistrationResult: &regResult,
+		}
+	}
+
+	if player.UserID != req.UserID {
+		return TransferPlayerResult{NotYourPlayer: true}
+	}
+
+	// Check if the new kingdom has space
+	userPlayers, err := s.store.FindByUser(req.UserID)
+	if err != nil {
+		slog.Error("failed to look up players by user for transfer", "error", err)
+		return TransferPlayerResult{StoreError: err}
+	}
+
+	kingdomPlayerCount := 0
+	for _, p := range userPlayers {
+		// an existing registration for this player should not count towards the limit
+		if p.KingdomID == req.NewKingdomID && p.PlayerID != req.PlayerID {
+			kingdomPlayerCount++
+		}
+	}
+
+	if kingdomPlayerCount >= 2 {
+		return TransferPlayerResult{MaxPlayersForNewKingdomReached: true}
+	}
+
+	if err := s.store.UpdatePlayerKingdom(req.PlayerID, req.NewKingdomID); err != nil {
+		slog.Error("failed to update player kingdom", "error", err)
+		return TransferPlayerResult{StoreError: err}
+	}
+
+	return TransferPlayerResult{
+		PlayerID:     req.PlayerID,
+		NewKingdomID: req.NewKingdomID,
+		UserID:       req.UserID,
+		Success:      true,
+	}
+}
+
 func (s *GiftCodeService) GetPlayersByUser(userID string) ([]*Player, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,7 +237,7 @@ func (s *GiftCodeService) isCodeKnown(code string) (active, expired bool) {
 func (s *GiftCodeService) redeemForPlayer(player *Player, code string) string {
 	resp, err := s.redeemGiftCode(player.PlayerID, player.KingdomID, code)
 	if err != nil {
-		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code, "message", resp.Message)
+		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code)
 		return "Error redeeming code."
 	}
 	slog.Info("redeem response", "player_id", player.PlayerID, "code", code, "err_code", resp.ErrCode, "message", resp.Message)

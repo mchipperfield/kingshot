@@ -41,7 +41,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build Go Binary
-        run: GOOS=linux GOARCH=amd64 go build -v -o kingshot .
+        run: GOOS=linux GOARCH=amd64 go build -v -o kingshot ./cmd/discord
 
       # Step 4: Upload the built binary as an artifact
       # This makes the "my-app-binary" file available to other jobs (like 'deploy')

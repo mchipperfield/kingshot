@@ -83,12 +83,12 @@ func (s *Store) FindByUser(userID string) ([]*kingshot.Player, error) {
 // AddPlayer appends a new player row to the file.
 // The caller (GiftCodeService) is responsible for calling FindByPlayerID first
 // to ensure a playerID is not registered more than once.
-func (s *Store) AddPlayer(player *kingshot.Player) error {
+func (s *Store) AddPlayer(req kingshot.NewPlayerRequest) error {
 	records, err := s.readAll()
 	if err != nil {
 		return err
 	}
-	records = append(records, []string{player.PlayerID, player.UserID, player.KingdomID})
+	records = append(records, []string{req.PlayerID, req.UserID, req.KingdomID})
 	return s.writeAll(records)
 }
 

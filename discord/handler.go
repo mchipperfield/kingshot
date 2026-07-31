@@ -105,6 +105,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		PlayerID:  playerID,
 		KingdomID: kingdomID,
 		UserID:    i.Member.User.ID,
+		GuildID:   i.Interaction.GuildID,
 	}
 
 	result := svc.RegisterPlayer(req)

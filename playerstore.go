@@ -17,5 +17,5 @@ type PlayerStore interface {
 	// FindByUser returns all players registered to a given user.
 	FindByUser(userID string) ([]*Player, error)
 	// AddPlayer stores a new player.
-	AddPlayer(player *Player) error
+	AddPlayer(req NewPlayerRequest) error
 }

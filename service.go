@@ -98,7 +98,7 @@ func (s *GiftCodeService) ProcessNewCode(code string) CodeResult {
 
 // NewPlayerRequest is the set of parameters for registering a new player.
 type NewPlayerRequest struct {
-	PlayerID, UserID, KingdomID string
+	PlayerID, UserID, KingdomID, GuildID string
 }
 
 // RegisterPlayer validates playerID via the KingShot API, registers it with
@@ -137,15 +137,15 @@ func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 		return RegisterResult{MaxPlayersForKingdomReached: true}
 	}
 
+	if err := s.store.AddPlayer(req); err != nil {
+		slog.Error("failed to add player", "error", err)
+		return RegisterResult{StoreError: err}
+	}
+
 	player := &Player{
 		PlayerID:  req.PlayerID,
 		UserID:    req.UserID,
 		KingdomID: req.KingdomID,
-	}
-
-	if err := s.store.AddPlayer(player); err != nil {
-		slog.Error("failed to add player", "error", err)
-		return RegisterResult{StoreError: err}
 	}
 
 	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
@@ -168,10 +168,10 @@ func (s *GiftCodeService) isCodeKnown(code string) (active, expired bool) {
 func (s *GiftCodeService) redeemForPlayer(player *Player, code string) string {
 	resp, err := s.redeemGiftCode(player.PlayerID, player.KingdomID, code)
 	if err != nil {
-		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code)
+		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code, "message", resp.Message)
 		return "Error redeeming code."
 	}
-	slog.Info("redeem response", "player_id", player.PlayerID, "code", code, "err_code", resp.ErrCode)
+	slog.Info("redeem response", "player_id", player.PlayerID, "code", code, "err_code", resp.ErrCode, "message", resp.Message)
 	return interpretRedeemResult(resp.ErrCode).msg
 }
 

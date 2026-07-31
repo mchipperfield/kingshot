@@ -59,9 +59,14 @@ func (m *mapStore) FindByUser(userID string) ([]*Player, error) {
 	return userPlayers, nil
 }
 
-func (m *mapStore) AddPlayer(player *Player) error {
+func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	player := &Player{
+		PlayerID:  req.PlayerID,
+		UserID:    req.UserID,
+		KingdomID: req.KingdomID,
+	}
 	m.players[player.PlayerID] = player
 	return nil
 }
@@ -72,7 +77,7 @@ type errStore struct{ err error }
 func (e *errStore) Players() ([]*Player, error)                  { return nil, e.err }
 func (e *errStore) FindByPlayerID(string) (*Player, bool, error) { return nil, false, e.err }
 func (e *errStore) FindByUser(string) ([]*Player, error)         { return nil, e.err }
-func (e *errStore) AddPlayer(*Player) error                      { return e.err }
+func (e *errStore) AddPlayer(NewPlayerRequest) error                      { return e.err }
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.

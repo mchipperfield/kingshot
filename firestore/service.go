@@ -2,6 +2,7 @@ package firestore
 
 import (
 	"context"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/mchipperfield/kingshot"
@@ -15,9 +16,11 @@ type PlayerStore struct {
 }
 
 type player struct {
-	PlayerID  string `firestore:"player_id"`
-	UserID    string `firestore:"user_id"`
-	KingdomID string `firestore:"kingdom_id"`
+	PlayerID     string    `firestore:"player_id"`
+	UserID       string    `firestore:"user_id"`
+	KingdomID    string    `firestore:"kingdom_id"`
+	RegisteredAt time.Time `firestore:"registered_at"`
+	GuildID      string    `firestore:"guild_id"`
 }
 
 func NewPlayerStore(projectId string) (*PlayerStore, error) {
@@ -101,12 +104,14 @@ func (ps *PlayerStore) FindByUser(userID string) ([]*kingshot.Player, error) {
 	return players, nil
 }
 
-func (ps *PlayerStore) AddPlayer(p *kingshot.Player) error {
+func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
 	internalPlayer := player{
-		PlayerID:  p.PlayerID,
-		UserID:    p.UserID,
-		KingdomID: p.KingdomID,
+		PlayerID:     req.PlayerID,
+		UserID:       req.UserID,
+		KingdomID:    req.KingdomID,
+		RegisteredAt: time.Now(),
+		GuildID:      req.GuildID,
 	}
-	_, err := ps.Client.Collection("players").Doc(p.PlayerID).Set(context.Background(), internalPlayer)
+	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(context.Background(), internalPlayer)
 	return err
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
 	"github.com/mchipperfield/kingshot/discord"
-	csvstore "github.com/mchipperfield/kingshot/playerstore/csv"
+	"github.com/mchipperfield/kingshot/firestore"
 	"github.com/peterbourgon/ff"
 )
 
@@ -22,17 +22,14 @@ func main() {
 
 	fs := flag.NewFlagSet("", flag.ContinueOnError)
 	var (
-		token        = fs.String("bot_token", "", "bot authentication token")
-		playerIDFile = fs.String("player_id_file", "player_ids.csv", "file to store player IDs")
-		activeCodes  = fs.String("active_codes", "PICNIC2026,AJISAI26JP,Kingshot888,VIP777", "comma-separated active gift codes")
+		token = fs.String("bot_token", "", "bot authentication token")
 	)
 
 	if err := ff.Parse(fs,
 		os.Args[1:],
 		ff.WithEnvVarNoPrefix(),
 		ff.WithConfigFile(".env"),
-		ff.WithConfigFileParser(dotEnvParser),
-	); err != nil {
+		ff.WithConfigFileParser(dotEnvParser)); err != nil {
 		logger.Log("failed to parse flags", "error", err)
 		os.Exit(1)
 	}
@@ -48,9 +45,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	activeCodeList := parseActiveCodes(*activeCodes)
+	store, err := firestore.NewPlayerStore(os.Getenv("GCP_PROJECT_ID"))
+	if err != nil {
+		logger.Log("failed to create firestore client", "error", err)
+		os.Exit(1)
+	}
 
-	svc := kingshot.New(csvstore.New(*playerIDFile), activeCodeList...)
+	svc := kingshot.New(store, []string{"Kingshot888", "VIP777"}...)
 	discord.Register(session, svc)
 
 	commands := discord.GiftCodeCommands()
@@ -127,24 +128,29 @@ func reconcileGlobalCommands(
 	deleteCommand func(id, name string) error,
 	createCommand func(*discordgo.ApplicationCommand) error,
 ) {
-	existing, err := fetch()
-	if err != nil {
-		logger.Log("could not fetch existing global commands; skipping cleanup step, duplicate commands may be created", "error", err)
-	} else {
-		// Reconcile only the commands owned by this bot flow.
-		for _, cmd := range existing {
-			if _, ok := commandNames[cmd.Name]; !ok {
-				continue
-			}
-			if err := deleteCommand(cmd.ID, cmd.Name); err != nil {
-				logger.Log("cannot delete command", "command", cmd.Name, "error", err)
-			}
+	for _, cmd := range commands {
+		logger.Log("creating command", "command", cmd.Name)
+		if err := createCommand(cmd); err != nil {
+			logger.Log("cannot create command", "command", cmd.Name, "error", err)
+		} else {
+			logger.Log("created command", "command", cmd.Name)
 		}
 	}
 
-	for _, cmd := range commands {
-		if err := createCommand(cmd); err != nil {
-			logger.Log("cannot create command", "command", cmd.Name, "error", err)
+	existing, err := fetch()
+	if err != nil {
+		logger.Log("could not fetch existing global commands for cleanup", "error", err)
+		return
+	}
+
+	for _, cmd := range existing {
+		if _, ok := commandNames[cmd.Name]; !ok {
+			logger.Log("deleting stale command", "command", cmd.Name, "id", cmd.ID)
+			if err := deleteCommand(cmd.ID, cmd.Name); err != nil {
+				logger.Log("cannot delete stale command", "command", cmd.Name, "error", err)
+			} else {
+				logger.Log("deleted stale command", "command", cmd.Name, "id", cmd.ID)
+			}
 		}
 	}
 }

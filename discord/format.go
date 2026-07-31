@@ -41,8 +41,8 @@ func formatCodeResult(r kingshot.CodeResult) string {
 		return fmt.Sprintf("Code `%s` has expired and cannot be re-added.", r.Code)
 	case r.Invalid:
 		return fmt.Sprintf("Code `%s` is not valid and was not added.", r.Code)
-	case r.LoginFailed:
-		return fmt.Sprintf("Code `%s` could not be validated - unable to login.", r.Code)
+	case r.InvalidPlayer:
+		return fmt.Sprintf("Code `%s` could not be validated as the player is invalid.", r.Code)
 	case r.Added && len(r.PlayerResults) == 0:
 		return fmt.Sprintf("There are no registered players, but code `%s` has been added to the active list.", r.Code)
 	}
@@ -76,6 +76,8 @@ func formatRegisterResult(r kingshot.RegisterResult) string {
 		return "This player ID is already registered to your Discord account."
 	case r.AlreadyOther:
 		return "This player ID is already registered to another Discord account."
+	case r.MaxPlayersForKingdomReached:
+		return "You have already registered the maximum number of players for this kingdom."
 	}
 
 	response := fmt.Sprintf(

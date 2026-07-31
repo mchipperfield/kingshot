@@ -6,6 +6,7 @@ package discord
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
@@ -21,14 +22,32 @@ func Register(s *discordgo.Session, svc *kingshot.GiftCodeService) {
 func GiftCodeCommands() []*discordgo.ApplicationCommand {
 	return []*discordgo.ApplicationCommand{
 		{
-			Name:        "register",
-			Description: "Register your KingShot player ID",
+			Name:        "player",
+			Description: "Player-related commands",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "player-id",
-					Description: "Your KingShot player ID",
-					Required:    true,
+					Name:        "register",
+					Description: "Register your KingShot player ID",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "player-id",
+							Description: "Your KingShot Player ID",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "kingdom-id",
+							Description: "Your Kingdom ID",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Name:        "status",
+					Description: "Show your registered players",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
 				},
 			},
 		},
@@ -54,9 +73,16 @@ func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session
 		if i.Type != discordgo.InteractionApplicationCommand {
 			return
 		}
+
 		switch i.ApplicationCommandData().Name {
-		case "register":
-			handleRegisterPlayer(s, i, svc)
+		case "player":
+			subcommand := i.ApplicationCommandData().Options[0].Name
+			switch subcommand {
+			case "register":
+				handleRegisterPlayer(s, i, svc)
+			case "status":
+				handlePlayerStatus(s, i, svc)
+			}
 		case "code":
 			handleAddCode(s, i, svc)
 		}
@@ -72,10 +98,25 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
-	playerID := i.ApplicationCommandData().Options[0].StringValue()
-	discordID := i.Member.User.ID
+	options := i.ApplicationCommandData().Options[0].Options
+	var playerID, kingdomID string
+	for _, opt := range options {
+		switch opt.Name {
+		case "player-id":
+			playerID = opt.StringValue()
+		case "kingdom-id":
+			kingdomID = opt.StringValue()
+		}
+	}
 
-	result := svc.RegisterPlayer(playerID, discordID)
+	req := kingshot.NewPlayerRequest{
+		PlayerID:  playerID,
+		KingdomID: kingdomID,
+		UserID:    i.Member.User.ID,
+		GuildID:   i.Interaction.GuildID,
+	}
+
+	result := svc.RegisterPlayer(req)
 	reply(s, i, formatRegisterResult(result))
 }
 
@@ -101,4 +142,34 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
 	}
+}
+
+func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		slog.Error("failed to defer interaction response for status", "error", err)
+		return
+	}
+
+	players, err := svc.GetPlayersByUser(i.Member.User.ID)
+	if err != nil {
+		slog.Error("failed to get players for user", "error", err, "user_id", i.Member.User.ID)
+		reply(s, i, "Error fetching your players.")
+		return
+	}
+
+	if len(players) == 0 {
+		reply(s, i, "You have no registered players.")
+		return
+	}
+
+	var builder strings.Builder
+	builder.WriteString("Your registered players:\n")
+	for _, p := range players {
+		builder.WriteString(fmt.Sprintf("- Player ID: `%s`, Kingdom ID: `%s`\n", p.PlayerID, p.KingdomID))
+	}
+
+	reply(s, i, builder.String())
 }

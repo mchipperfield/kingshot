@@ -17,57 +17,75 @@ import (
 // mapStore is an in-memory PlayerStore for testing.
 type mapStore struct {
 	mu      sync.Mutex
-	players map[string]string // playerID → externalID
+	players map[string]*Player // playerID → Player
 }
 
-func newMapStore(initial map[string]string) *mapStore {
-	players := make(map[string]string)
-	for k, v := range initial {
-		players[k] = v
+func newMapStore(initial map[string]*Player) *mapStore {
+	players := make(map[string]*Player)
+	if initial != nil {
+		for k, v := range initial {
+			players[k] = v
+		}
 	}
 	return &mapStore{players: players}
 }
 
-func (m *mapStore) PlayerIDs() ([]string, error) {
+func (m *mapStore) Players() ([]*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ids := make([]string, 0, len(m.players))
-	for id := range m.players {
-		ids = append(ids, id)
+	players := make([]*Player, 0, len(m.players))
+	for _, p := range m.players {
+		players = append(players, p)
 	}
-	return ids, nil
+	return players, nil
 }
 
-func (m *mapStore) FindByPlayerID(playerID string) (string, bool, error) {
+func (m *mapStore) FindByPlayerID(playerID string) (*Player, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id, found := m.players[playerID]
-	return id, found, nil
+	p, found := m.players[playerID]
+	return p, found, nil
 }
 
-func (m *mapStore) AddPlayer(playerID, externalID string) error {
+func (m *mapStore) FindByUser(userID string) ([]*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.players[playerID] = externalID
+	var userPlayers []*Player
+	for _, p := range m.players {
+		if p.UserID == userID {
+			userPlayers = append(userPlayers, p)
+		}
+	}
+	return userPlayers, nil
+}
+
+func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	player := &Player{
+		PlayerID:  req.PlayerID,
+		UserID:    req.UserID,
+		KingdomID: req.KingdomID,
+	}
+	m.players[player.PlayerID] = player
 	return nil
 }
 
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
-func (e *errStore) PlayerIDs() ([]string, error)                { return nil, e.err }
-func (e *errStore) FindByPlayerID(string) (string, bool, error) { return "", false, e.err }
-func (e *errStore) AddPlayer(string, string) error              { return e.err }
+func (e *errStore) Players() ([]*Player, error)                  { return nil, e.err }
+func (e *errStore) FindByPlayerID(string) (*Player, bool, error) { return nil, false, e.err }
+func (e *errStore) FindByUser(string) ([]*Player, error)         { return nil, e.err }
+func (e *errStore) AddPlayer(NewPlayerRequest) error                      { return e.err }
 
-// mockKingShotAPI starts an httptest server for /player (login) and
-// /gift_code (redeem), and returns a GiftCodeService wired to it.
-func mockKingShotAPI(t *testing.T, loginCode int, redeemErrCode string) *GiftCodeService {
+// mockKingShotAPI starts an httptest server for /gift_code (redeem),
+// and returns a GiftCodeService wired to it.
+func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/player":
-			json.NewEncoder(w).Encode(LoginResponse{Code: loginCode})
 		case "/gift_code":
 			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(redeemErrCode)})
 		default:
@@ -76,7 +94,6 @@ func mockKingShotAPI(t *testing.T, loginCode int, redeemErrCode string) *GiftCod
 	}))
 	t.Cleanup(srv.Close)
 	return &GiftCodeService{
-		loginURL:  srv.URL + "/player",
 		redeemURL: srv.URL + "/gift_code",
 		client:    srv.Client(),
 		store:     newMapStore(nil),
@@ -215,32 +232,6 @@ func TestEncodePayload(t *testing.T) {
 	})
 }
 
-// TestLoginResponseDecoding verifies that LoginResponse JSON with both string
-// and numeric err_code values deserialises correctly.
-func TestLoginResponseDecoding(t *testing.T) {
-	t.Run("numeric err_code", func(t *testing.T) {
-		raw := `{"code": 0, "msg": "ok", "data": null, "err_code": 20000}`
-		var resp LoginResponse
-		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.ErrCode != ErrCode("20000") {
-			t.Errorf("ErrCode = %q, want %q", resp.ErrCode, "20000")
-		}
-	})
-
-	t.Run("string err_code", func(t *testing.T) {
-		raw := `{"code": 0, "msg": "ok", "data": null, "err_code": "20000"}`
-		var resp LoginResponse
-		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.ErrCode != ErrCode("20000") {
-			t.Errorf("ErrCode = %q, want %q", resp.ErrCode, "20000")
-		}
-	})
-}
-
 // TestRedeemResponseDecoding mirrors TestLoginResponseDecoding for RedeemResponse.
 func TestRedeemResponseDecoding(t *testing.T) {
 	raw := fmt.Sprintf(`{"code": 0, "msg": "success", "err_code": "%s"}`, ErrCodeSuccess)
@@ -334,6 +325,55 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	})
 }
 
+// TestGiftCodeService_RegisterPlayer tests the player registration logic.
+func TestGiftCodeService_RegisterPlayer(t *testing.T) {
+	t.Run("new player", func(t *testing.T) {
+		store := newMapStore(nil)
+		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"}
+		result := svc.RegisterPlayer(req)
+		if !result.Success {
+			t.Fatalf("expected success, got %+v", result)
+		}
+		if p, found, _ := store.FindByPlayerID("p1"); !found || p.UserID != "u1" {
+			t.Errorf("player not added to store correctly")
+		}
+	})
+
+	t.Run("player already registered to self", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u1"}})
+		svc := &GiftCodeService{store: store}
+		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.RegisterPlayer(req)
+		if !result.AlreadySelf {
+			t.Errorf("expected AlreadySelf=true, got %+v", result)
+		}
+	})
+
+	t.Run("player already registered to other", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u2"}})
+		svc := &GiftCodeService{store: store}
+		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.RegisterPlayer(req)
+		if !result.AlreadyOther {
+			t.Errorf("expected AlreadyOther=true, got %+v", result)
+		}
+	})
+
+	t.Run("max players for kingdom reached", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := NewPlayerRequest{PlayerID: "p3", UserID: "u1", KingdomID: "k1"}
+		result := svc.RegisterPlayer(req)
+		if !result.MaxPlayersForKingdomReached {
+			t.Errorf("expected MaxPlayersForKingdomReached=true, got %+v", result)
+		}
+	})
+}
+
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.
 func TestGiftCodeService_concurrentAccess(t *testing.T) {
@@ -380,7 +420,7 @@ func TestGiftCodeService_isCodeKnown(t *testing.T) {
 	}
 }
 
-// TestGiftCodeService_redeemForPlayer tests the login → redeem → interpret
+// TestGiftCodeService_redeemForPlayer tests the redeem → interpret
 // pipeline for a single player using a mock HTTP server.
 func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 	tests := []struct {
@@ -395,28 +435,29 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := mockKingShotAPI(t, 0, tt.redeemErrCode)
-			got := svc.redeemForPlayer("player1", "TESTCODE")
+			svc := mockKingShotAPI(t, tt.redeemErrCode)
+			player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
+			got := svc.redeemForPlayer(player, "TESTCODE")
 			if got != tt.wantMsg {
 				t.Errorf("got %q, want %q", got, tt.wantMsg)
 			}
 		})
 	}
 
-	t.Run("login HTTP failure", func(t *testing.T) {
+	t.Run("redeem HTTP failure", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}))
 		t.Cleanup(srv.Close)
 		svc := &GiftCodeService{
-			loginURL:  srv.URL + "/player",
 			redeemURL: srv.URL + "/gift_code",
 			client:    srv.Client(),
 			store:     newMapStore(nil),
 		}
-		got := svc.redeemForPlayer("player1", "TESTCODE")
-		if got != "Failed to login." {
-			t.Errorf("got %q, want %q", got, "Failed to login.")
+		player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
+		got := svc.redeemForPlayer(player, "TESTCODE")
+		if got != "Error redeeming code." {
+			t.Errorf("got %q, want %q", got, "Error redeeming code.")
 		}
 	})
 }

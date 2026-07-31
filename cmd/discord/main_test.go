@@ -5,9 +5,11 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/mchipperfield/kingshot/discord"
 )
 
 func TestParseActiveCodes(t *testing.T) {
@@ -24,15 +26,11 @@ func TestParseActiveCodes(t *testing.T) {
 func TestCommandNameSet(t *testing.T) {
 	t.Parallel()
 
-	commands := []*discordgo.ApplicationCommand{
-		{Name: "register"},
-		{Name: "code"},
-	}
-
+	commands := discord.GiftCodeCommands()
 	names := commandNameSet(commands)
 
-	if _, ok := names["register"]; !ok {
-		t.Fatalf("expected register command in set")
+	if _, ok := names["player"]; !ok {
+		t.Fatalf("expected player command in set")
 	}
 	if _, ok := names["code"]; !ok {
 		t.Fatalf("expected code command in set")
@@ -42,16 +40,13 @@ func TestCommandNameSet(t *testing.T) {
 	}
 }
 
-func TestReconcileGlobalCommandsDeletesKnownAndCreatesAll(t *testing.T) {
+func TestReconcileGlobalCommands(t *testing.T) {
 	t.Parallel()
 
-	var deleted []string
 	var created []string
+	var deleted []string
 
-	commands := []*discordgo.ApplicationCommand{
-		{ID: "new-register", Name: "register"},
-		{ID: "new-code", Name: "code"},
-	}
+	commands := discord.GiftCodeCommands() // "player", "code"
 	commandNames := commandNameSet(commands)
 
 	reconcileGlobalCommands(
@@ -59,13 +54,14 @@ func TestReconcileGlobalCommandsDeletesKnownAndCreatesAll(t *testing.T) {
 		commands,
 		commandNames,
 		func() ([]*discordgo.ApplicationCommand, error) {
+			// Existing commands on discord
 			return []*discordgo.ApplicationCommand{
-				{ID: "old-register", Name: "register"},
-				{ID: "old-unrelated", Name: "other"},
+				{ID: "1", Name: "player"},        // Will be updated by create
+				{ID: "2", Name: "stale-command"}, // Should be deleted
 			}, nil
 		},
-		func(id, _ string) error {
-			deleted = append(deleted, id)
+		func(id, name string) error {
+			deleted = append(deleted, name)
 			return nil
 		},
 		func(cmd *discordgo.ApplicationCommand) error {
@@ -74,33 +70,36 @@ func TestReconcileGlobalCommandsDeletesKnownAndCreatesAll(t *testing.T) {
 		},
 	)
 
-	if !reflect.DeepEqual(deleted, []string{"old-register"}) {
-		t.Fatalf("deleted IDs = %v, want [old-register]", deleted)
+	// Check created
+	sort.Strings(created)
+	if !reflect.DeepEqual(created, []string{"code", "player"}) {
+		t.Errorf("created commands = %v, want [code player]", created)
 	}
-	if !reflect.DeepEqual(created, []string{"register", "code"}) {
-		t.Fatalf("created commands = %v, want [register code]", created)
+
+	// Check deleted
+	if !reflect.DeepEqual(deleted, []string{"stale-command"}) {
+		t.Errorf("deleted commands = %v, want [stale-command]", deleted)
 	}
 }
 
-func TestReconcileGlobalCommandsCreatesWhenFetchFails(t *testing.T) {
+func TestReconcileGlobalCommands_FetchFails(t *testing.T) {
 	t.Parallel()
 
 	var created []string
+	var deleted []string
 
-	commands := []*discordgo.ApplicationCommand{
-		{Name: "register"},
-		{Name: "code"},
-	}
+	commands := discord.GiftCodeCommands()
+	commandNames := commandNameSet(commands)
 
 	reconcileGlobalCommands(
 		logger{slog.New(slog.NewTextHandler(io.Discard, nil))},
 		commands,
-		commandNameSet(commands),
+		commandNames,
 		func() ([]*discordgo.ApplicationCommand, error) {
 			return nil, errors.New("fetch failed")
 		},
-		func(_, _ string) error {
-			t.Fatal("delete should not be called when fetch fails")
+		func(id, name string) error {
+			deleted = append(deleted, name)
 			return nil
 		},
 		func(cmd *discordgo.ApplicationCommand) error {
@@ -109,7 +108,14 @@ func TestReconcileGlobalCommandsCreatesWhenFetchFails(t *testing.T) {
 		},
 	)
 
-	if !reflect.DeepEqual(created, []string{"register", "code"}) {
-		t.Fatalf("created commands = %v, want [register code]", created)
+	// Check created
+	sort.Strings(created)
+	if !reflect.DeepEqual(created, []string{"code", "player"}) {
+		t.Errorf("created commands = %v, want [code player]", created)
+	}
+
+	// Check deleted
+	if len(deleted) != 0 {
+		t.Errorf("deleted commands = %v, want []", deleted)
 	}
 }

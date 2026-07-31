@@ -18,7 +18,6 @@ type GiftCodeService struct {
 	expiredCodes []string
 	store        PlayerStore
 	client       *http.Client
-	loginURL     string
 	redeemURL    string
 }
 
@@ -28,7 +27,6 @@ func New(store PlayerStore, activeCodes ...string) *GiftCodeService {
 	return &GiftCodeService{
 		store:       store,
 		activeCodes: activeCodes,
-		loginURL:    defaultLoginURL,
 		redeemURL:   defaultRedeemURL,
 		client: &http.Client{
 			Transport: &transport{
@@ -50,30 +48,25 @@ func (s *GiftCodeService) ProcessNewCode(code string) CodeResult {
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 
-	playerIDs, err := s.store.PlayerIDs()
+	players, err := s.store.Players()
 	if err != nil {
 		return CodeResult{Code: code, StoreError: err}
 	}
 
-	if len(playerIDs) == 0 {
+	if len(players) == 0 {
 		s.activeCodes = append(s.activeCodes, code)
 		slog.Info("code added with no registered players", "code", code)
 		return CodeResult{Code: code, Added: true}
 	}
 
-	firstPlayerID := playerIDs[0]
-	if _, err := s.login(firstPlayerID); err != nil {
-		slog.Error("failed to login before validating new code", "error", err)
-		return CodeResult{Code: code, APIError: err}
-	}
-
-	redeemResp, err := s.redeemGiftCode(firstPlayerID, code)
+	firstPlayer := players[0]
+	redeemResp, err := s.redeemGiftCode(firstPlayer.PlayerID, firstPlayer.KingdomID, code)
 	if err != nil {
 		slog.Error("failed to validate new code", "error", err, "code", code)
 		return CodeResult{Code: code, APIError: err}
 	}
 
-	slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayerID)
+	slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
 
 	outcome := interpretRedeemResult(redeemResp.ErrCode)
 	if outcome.codeExpired {
@@ -84,67 +77,92 @@ func (s *GiftCodeService) ProcessNewCode(code string) CodeResult {
 		return CodeResult{Code: code, Invalid: true}
 	}
 	if outcome.loginFailed {
-		return CodeResult{Code: code, LoginFailed: true}
+		// This error code is now repurposed to mean the player is invalid
+		return CodeResult{Code: code, InvalidPlayer: true}
 	}
 
 	s.activeCodes = append(s.activeCodes, code)
 	slog.Info("code added", "code", code)
 
-	results := make([]PlayerRedeemResult, 0, len(playerIDs))
-	results = append(results, PlayerRedeemResult{PlayerID: firstPlayerID, Message: outcome.msg})
-	for _, playerID := range playerIDs[1:] {
+	results := make([]PlayerRedeemResult, 0, len(players))
+	results = append(results, PlayerRedeemResult{PlayerID: firstPlayer.PlayerID, Message: outcome.msg})
+	for _, player := range players[1:] {
 		results = append(results, PlayerRedeemResult{
-			PlayerID: playerID,
-			Message:  s.redeemForPlayer(playerID, code),
+			PlayerID: player.PlayerID,
+			Message:  s.redeemForPlayer(player, code),
 		})
 	}
 
 	return CodeResult{Code: code, Added: true, PlayerResults: results}
 }
 
-// RegisterPlayer validates playerID via the KingShot API, registers it with
-// externalID in the store, and redeems any currently active codes for the
-// new player. It is safe to call concurrently.
-func (s *GiftCodeService) RegisterPlayer(playerID, externalID string) RegisterResult {
-	loginResp, err := s.login(playerID)
-	if err != nil {
-		slog.Error("failed to call login endpoint", "error", err)
-		return RegisterResult{APIError: err}
-	}
-	if loginResp.Code != 0 {
-		slog.Info("invalid player id", "player_id", playerID, "response_code", loginResp.Code)
-		return RegisterResult{InvalidPlayer: true}
-	}
+// NewPlayerRequest is the set of parameters for registering a new player.
+type NewPlayerRequest struct {
+	PlayerID, UserID, KingdomID, GuildID string
+}
 
+// RegisterPlayer validates playerID via the KingShot API, registers it with
+// UserID in the store, and redeems any currently active codes for the
+// new player. It is safe to call concurrently.
+func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	existing, found, err := s.store.FindByPlayerID(playerID)
+	existing, found, err := s.store.FindByPlayerID(req.PlayerID)
 	if err != nil {
 		slog.Error("failed to look up player for registration", "error", err)
 		return RegisterResult{StoreError: err}
 	}
 	if found {
-		if existing == externalID {
+		if existing.UserID == req.UserID {
 			return RegisterResult{AlreadySelf: true}
 		}
 		return RegisterResult{AlreadyOther: true}
 	}
 
-	if err := s.store.AddPlayer(playerID, externalID); err != nil {
+	userPlayers, err := s.store.FindByUser(req.UserID)
+	if err != nil {
+		slog.Error("failed to look up players by user for registration", "error", err)
+		return RegisterResult{StoreError: err}
+	}
+
+	kingdomPlayerCount := 0
+	for _, p := range userPlayers {
+		if p.KingdomID == req.KingdomID {
+			kingdomPlayerCount++
+		}
+	}
+
+	if kingdomPlayerCount >= 2 {
+		return RegisterResult{MaxPlayersForKingdomReached: true}
+	}
+
+	if err := s.store.AddPlayer(req); err != nil {
 		slog.Error("failed to add player", "error", err)
 		return RegisterResult{StoreError: err}
 	}
 
-	slog.Info("user subscribed to bot", "player_id", playerID, "external_id", externalID)
+	player := &Player{
+		PlayerID:  req.PlayerID,
+		UserID:    req.UserID,
+		KingdomID: req.KingdomID,
+	}
 
-	codeResults := s.redeemActiveCodes(playerID)
+	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
+
+	codeResults := s.redeemActiveCodes(player)
 	return RegisterResult{
-		PlayerID:    playerID,
-		ExternalID:  externalID,
+		PlayerID:    req.PlayerID,
+		UserID:      req.UserID,
 		Success:     true,
 		CodeResults: codeResults,
 	}
+}
+
+func (s *GiftCodeService) GetPlayersByUser(userID string) ([]*Player, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.FindByUser(userID)
 }
 
 // isCodeKnown reports whether code is already tracked. Caller must hold s.mu.
@@ -153,23 +171,19 @@ func (s *GiftCodeService) isCodeKnown(code string) (active, expired bool) {
 }
 
 // redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.
-func (s *GiftCodeService) redeemForPlayer(playerID, code string) string {
-	if _, err := s.login(playerID); err != nil {
-		slog.Error("failed to login", "error", err, "player_id", playerID)
-		return "Failed to login."
-	}
-	resp, err := s.redeemGiftCode(playerID, code)
+func (s *GiftCodeService) redeemForPlayer(player *Player, code string) string {
+	resp, err := s.redeemGiftCode(player.PlayerID, player.KingdomID, code)
 	if err != nil {
-		slog.Error("failed to redeem", "error", err, "player_id", playerID, "code", code)
+		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code, "message", resp.Message)
 		return "Error redeeming code."
 	}
-	slog.Info("redeem response", "player_id", playerID, "code", code, "err_code", resp.ErrCode)
+	slog.Info("redeem response", "player_id", player.PlayerID, "code", code, "err_code", resp.ErrCode, "message", resp.Message)
 	return interpretRedeemResult(resp.ErrCode).msg
 }
 
 // redeemActiveCodes redeems all currently active codes for playerID and returns
 // a slice of per-code results. Caller must hold s.mu.
-func (s *GiftCodeService) redeemActiveCodes(playerID string) []ActiveCodeResult {
+func (s *GiftCodeService) redeemActiveCodes(player *Player) []ActiveCodeResult {
 	if len(s.activeCodes) == 0 {
 		return nil
 	}
@@ -178,13 +192,13 @@ func (s *GiftCodeService) redeemActiveCodes(playerID string) []ActiveCodeResult 
 	var codesToRemove []string
 
 	for _, code := range s.activeCodes {
-		redeemResp, err := s.redeemGiftCode(playerID, code)
+		redeemResp, err := s.redeemGiftCode(player.PlayerID, player.KingdomID, code)
 		if err != nil {
-			slog.Error("failed to redeem gift code after registration", "error", err, "code", code, "player_id", playerID)
+			slog.Error("failed to redeem gift code after registration", "error", err, "code", code, "player_id", player.PlayerID)
 			results = append(results, ActiveCodeResult{Code: code, Message: "Error redeeming code."})
 			continue
 		}
-		slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", playerID)
+		slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", player.PlayerID)
 
 		outcome := interpretRedeemResult(redeemResp.ErrCode)
 		if outcome.codeExpired || outcome.codeInvalid {

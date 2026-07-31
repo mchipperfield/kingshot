@@ -9,7 +9,7 @@ import (
 )
 
 // TestGiftCodeCommands verifies that the command list contains exactly the
-// /register and /code commands, each with at least one required option.
+// /player and /code commands, each with at least one required option.
 func TestGiftCodeCommands(t *testing.T) {
 	cmds := GiftCodeCommands()
 
@@ -25,7 +25,7 @@ func TestGiftCodeCommands(t *testing.T) {
 		}
 	}
 
-	for _, want := range []string{"register", "code"} {
+	for _, want := range []string{"player", "code"} {
 		if !names[want] {
 			t.Errorf("expected command %q, not found in %v", want, names)
 		}
@@ -134,9 +134,9 @@ func TestFormatCodeResult(t *testing.T) {
 			"not valid",
 		},
 		{
-			"login failed",
-			kingshot.CodeResult{Code: "X", LoginFailed: true},
-			"unable to login",
+			"invalid player",
+			kingshot.CodeResult{Code: "X", InvalidPlayer: true},
+			"player is invalid",
 		},
 		{
 			"no players",
@@ -199,6 +199,7 @@ func TestFormatRegisterResult(t *testing.T) {
 		{"store error", kingshot.RegisterResult{StoreError: errSentinel}, "Error registering"},
 		{"already self", kingshot.RegisterResult{AlreadySelf: true}, "already registered to your"},
 		{"already other", kingshot.RegisterResult{AlreadyOther: true}, "already registered to another"},
+		{"max players for kingdom", kingshot.RegisterResult{MaxPlayersForKingdomReached: true}, "maximum number of players for this kingdom"},
 		{"success no codes", kingshot.RegisterResult{Success: true, PlayerID: "pid123"}, "pid123"},
 	}
 

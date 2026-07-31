@@ -219,6 +219,7 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		PlayerID:     playerID,
 		NewKingdomID: newKingdomID,
 		UserID:       i.Member.User.ID,
+		GuildID:      i.GuildID,
 	}
 
 	result := svc.TransferPlayer(req)

@@ -144,4 +144,5 @@ type TransferPlayerRequest struct {
 	PlayerID     string
 	NewKingdomID string
 	UserID       string
+	GuildID      string
 }

@@ -16,11 +16,18 @@ type PlayerStore struct {
 }
 
 type player struct {
-	PlayerID     string    `firestore:"player_id"`
-	UserID       string    `firestore:"user_id"`
-	KingdomID    string    `firestore:"kingdom_id"`
-	RegisteredAt time.Time `firestore:"registered_at"`
-	GuildID      string    `firestore:"guild_id"`
+	PlayerID     string         `firestore:"player_id"`
+	UserID       string         `firestore:"user_id"`
+	KingdomID    string         `firestore:"kingdom_id"`
+	RegisteredAt time.Time      `firestore:"registered_at"`
+	GuildID      string         `firestore:"guild_id"`
+	History      []historyEntry `firestore:"history,omitempty"`
+}
+
+type historyEntry struct {
+	GuildID   string    `firestore:"guild_id"`
+	Timestamp time.Time `firestore:"timestamp"`
+	Action    string    `firestore:"action"`
 }
 
 func NewPlayerStore(projectId string) (*PlayerStore, error) {
@@ -111,14 +118,27 @@ func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
 		KingdomID:    req.KingdomID,
 		RegisteredAt: time.Now(),
 		GuildID:      req.GuildID,
+		History: []historyEntry{
+			{
+				GuildID:   req.GuildID,
+				Timestamp: time.Now(),
+				Action:    "register",
+			},
+		},
 	}
 	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(context.Background(), internalPlayer)
 	return err
 }
 
-func (ps *PlayerStore) UpdatePlayerKingdom(playerID, newKingdomID string) error {
+func (ps *PlayerStore) UpdatePlayerKingdom(playerID, newKingdomID, guildID string) error {
+	entry := historyEntry{
+		GuildID:   guildID,
+		Timestamp: time.Now(),
+		Action:    "transfer",
+	}
 	_, err := ps.Client.Collection("players").Doc(playerID).Update(context.Background(), []firestore.Update{
 		{Path: "kingdom_id", Value: newKingdomID},
+		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})
 	return err
 }

@@ -81,7 +81,7 @@ func (ps *PlayerStore) FindByPlayerID(playerID string) (*kingshot.Player, bool, 
 
 func (ps *PlayerStore) FindByUser(userID string) ([]*kingshot.Player, error) {
 	var players []*kingshot.Player
-	iter := ps.Client.Collection("players").Where("userID", "==", userID).Documents(context.Background())
+	iter := ps.Client.Collection("players").Where("user_id", "==", userID).Documents(context.Background())
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {

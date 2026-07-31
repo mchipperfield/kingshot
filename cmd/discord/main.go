@@ -51,7 +51,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := kingshot.New(store)
+	svc := kingshot.New(store, []string{"Kingshot888", "VIP777"}...)
 	discord.Register(session, svc)
 
 	commands := discord.GiftCodeCommands()

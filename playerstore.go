@@ -2,9 +2,9 @@ package kingshot
 
 // Player holds all the information for a given player
 type Player struct {
-	PlayerID   string `firestore:"playerID"`
-	ExternalID string `firestore:"discordID"`
-	KingdomID  string `firestore:"kingdomID"`
+	PlayerID  string `firestore:"playerID"`
+	UserID    string `firestore:"userID"`
+	KingdomID string `firestore:"kingdomID"`
 }
 
 // PlayerStore manages persistent storage of registered players.
@@ -14,6 +14,8 @@ type PlayerStore interface {
 	// FindByPlayerID looks up the player by their playerID. found is false when
 	// the player is not registered.
 	FindByPlayerID(playerID string) (player *Player, found bool, err error)
+	// FindByUser returns all players registered to a given user.
+	FindByUser(userID string) ([]*Player, error)
 	// AddPlayer stores a new player.
 	AddPlayer(player *Player) error
 }

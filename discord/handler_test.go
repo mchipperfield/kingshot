@@ -199,6 +199,7 @@ func TestFormatRegisterResult(t *testing.T) {
 		{"store error", kingshot.RegisterResult{StoreError: errSentinel}, "Error registering"},
 		{"already self", kingshot.RegisterResult{AlreadySelf: true}, "already registered to your"},
 		{"already other", kingshot.RegisterResult{AlreadyOther: true}, "already registered to another"},
+		{"max players for kingdom", kingshot.RegisterResult{MaxPlayersForKingdomReached: true}, "maximum number of players for this kingdom"},
 		{"success no codes", kingshot.RegisterResult{Success: true, PlayerID: "pid123"}, "pid123"},
 	}
 

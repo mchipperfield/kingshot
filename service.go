@@ -98,11 +98,11 @@ func (s *GiftCodeService) ProcessNewCode(code string) CodeResult {
 
 // NewPlayerRequest is the set of parameters for registering a new player.
 type NewPlayerRequest struct {
-	PlayerID, ExternalID, KingdomID string
+	PlayerID, UserID, KingdomID string
 }
 
 // RegisterPlayer validates playerID via the KingShot API, registers it with
-// externalID in the store, and redeems any currently active codes for the
+// UserID in the store, and redeems any currently active codes for the
 // new player. It is safe to call concurrently.
 func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 	s.mu.Lock()
@@ -114,16 +114,33 @@ func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 		return RegisterResult{StoreError: err}
 	}
 	if found {
-		if existing.ExternalID == req.ExternalID {
+		if existing.UserID == req.UserID {
 			return RegisterResult{AlreadySelf: true}
 		}
 		return RegisterResult{AlreadyOther: true}
 	}
 
+	userPlayers, err := s.store.FindByUser(req.UserID)
+	if err != nil {
+		slog.Error("failed to look up players by user for registration", "error", err)
+		return RegisterResult{StoreError: err}
+	}
+
+	kingdomPlayerCount := 0
+	for _, p := range userPlayers {
+		if p.KingdomID == req.KingdomID {
+			kingdomPlayerCount++
+		}
+	}
+
+	if kingdomPlayerCount >= 2 {
+		return RegisterResult{MaxPlayersForKingdomReached: true}
+	}
+
 	player := &Player{
-		PlayerID:   req.PlayerID,
-		ExternalID: req.ExternalID,
-		KingdomID:  req.KingdomID,
+		PlayerID:  req.PlayerID,
+		UserID:    req.UserID,
+		KingdomID: req.KingdomID,
 	}
 
 	if err := s.store.AddPlayer(player); err != nil {
@@ -131,12 +148,12 @@ func (s *GiftCodeService) RegisterPlayer(req NewPlayerRequest) RegisterResult {
 		return RegisterResult{StoreError: err}
 	}
 
-	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "external_id", req.ExternalID)
+	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
 
 	codeResults := s.redeemActiveCodes(player)
 	return RegisterResult{
 		PlayerID:    req.PlayerID,
-		ExternalID:  req.ExternalID,
+		UserID:      req.UserID,
 		Success:     true,
 		CodeResults: codeResults,
 	}

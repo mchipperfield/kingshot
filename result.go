@@ -21,15 +21,16 @@ type PlayerRedeemResult struct {
 
 // RegisterResult is the structured outcome of a RegisterPlayer call.
 type RegisterResult struct {
-	PlayerID     string
-	ExternalID   string
-	AlreadySelf  bool // already registered to this exact externalID
-	AlreadyOther bool // already registered to a different externalID
-	InvalidPlayer bool
-	StoreError   error
-	APIError     error
+	PlayerID                  string
+	UserID                    string
+	AlreadySelf               bool // already registered to this exact externalID
+	AlreadyOther              bool // already registered to a different externalID
+	InvalidPlayer             bool
+	MaxPlayersForKingdomReached bool
+	StoreError                error
+	APIError                  error
 	CodeResults  []ActiveCodeResult
-	Success      bool
+	Success                   bool
 }
 
 // ActiveCodeResult is the redemption outcome for a single active code during registration.

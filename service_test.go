@@ -47,6 +47,18 @@ func (m *mapStore) FindByPlayerID(playerID string) (*Player, bool, error) {
 	return p, found, nil
 }
 
+func (m *mapStore) FindByUser(userID string) ([]*Player, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var userPlayers []*Player
+	for _, p := range m.players {
+		if p.UserID == userID {
+			userPlayers = append(userPlayers, p)
+		}
+	}
+	return userPlayers, nil
+}
+
 func (m *mapStore) AddPlayer(player *Player) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -59,6 +71,7 @@ type errStore struct{ err error }
 
 func (e *errStore) Players() ([]*Player, error)                  { return nil, e.err }
 func (e *errStore) FindByPlayerID(string) (*Player, bool, error) { return nil, false, e.err }
+func (e *errStore) FindByUser(string) ([]*Player, error)         { return nil, e.err }
 func (e *errStore) AddPlayer(*Player) error                      { return e.err }
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
@@ -307,6 +320,55 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	})
 }
 
+// TestGiftCodeService_RegisterPlayer tests the player registration logic.
+func TestGiftCodeService_RegisterPlayer(t *testing.T) {
+	t.Run("new player", func(t *testing.T) {
+		store := newMapStore(nil)
+		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"}
+		result := svc.RegisterPlayer(req)
+		if !result.Success {
+			t.Fatalf("expected success, got %+v", result)
+		}
+		if p, found, _ := store.FindByPlayerID("p1"); !found || p.UserID != "u1" {
+			t.Errorf("player not added to store correctly")
+		}
+	})
+
+	t.Run("player already registered to self", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u1"}})
+		svc := &GiftCodeService{store: store}
+		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.RegisterPlayer(req)
+		if !result.AlreadySelf {
+			t.Errorf("expected AlreadySelf=true, got %+v", result)
+		}
+	})
+
+	t.Run("player already registered to other", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u2"}})
+		svc := &GiftCodeService{store: store}
+		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.RegisterPlayer(req)
+		if !result.AlreadyOther {
+			t.Errorf("expected AlreadyOther=true, got %+v", result)
+		}
+	})
+
+	t.Run("max players for kingdom reached", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := NewPlayerRequest{PlayerID: "p3", UserID: "u1", KingdomID: "k1"}
+		result := svc.RegisterPlayer(req)
+		if !result.MaxPlayersForKingdomReached {
+			t.Errorf("expected MaxPlayersForKingdomReached=true, got %+v", result)
+		}
+	})
+}
+
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.
 func TestGiftCodeService_concurrentAccess(t *testing.T) {
@@ -369,7 +431,7 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := mockKingShotAPI(t, tt.redeemErrCode)
-			player := &Player{PlayerID: "player1", KingdomID: "k1", ExternalID: "discord1"}
+			player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
 			got := svc.redeemForPlayer(player, "TESTCODE")
 			if got != tt.wantMsg {
 				t.Errorf("got %q, want %q", got, tt.wantMsg)
@@ -387,7 +449,7 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 			client:    srv.Client(),
 			store:     newMapStore(nil),
 		}
-		player := &Player{PlayerID: "player1", KingdomID: "k1", ExternalID: "discord1"}
+		player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
 		got := svc.redeemForPlayer(player, "TESTCODE")
 		if got != "Error redeeming code." {
 			t.Errorf("got %q, want %q", got, "Error redeeming code.")

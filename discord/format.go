@@ -76,6 +76,8 @@ func formatRegisterResult(r kingshot.RegisterResult) string {
 		return "This player ID is already registered to your Discord account."
 	case r.AlreadyOther:
 		return "This player ID is already registered to another Discord account."
+	case r.MaxPlayersForKingdomReached:
+		return "You have already registered the maximum number of players for this kingdom."
 	}
 
 	response := fmt.Sprintf(

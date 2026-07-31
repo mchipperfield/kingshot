@@ -16,7 +16,7 @@ type PlayerStore struct {
 
 type player struct {
 	PlayerID  string `firestore:"playerID"`
-	DiscordID string `firestore:"discordID"`
+	UserID    string `firestore:"userID"`
 	KingdomID string `firestore:"kingdomID"`
 }
 
@@ -46,9 +46,9 @@ func (ps *PlayerStore) Players() ([]*kingshot.Player, error) {
 			return nil, err
 		}
 		players = append(players, &kingshot.Player{
-			PlayerID:   p.PlayerID,
-			ExternalID: p.DiscordID,
-			KingdomID:  p.KingdomID,
+			PlayerID:  p.PlayerID,
+			UserID:    p.UserID,
+			KingdomID: p.KingdomID,
 		})
 	}
 	return players, nil
@@ -70,16 +70,41 @@ func (ps *PlayerStore) FindByPlayerID(playerID string) (*kingshot.Player, bool, 
 	}
 
 	return &kingshot.Player{
-		PlayerID:   p.PlayerID,
-		ExternalID: p.DiscordID,
-		KingdomID:  p.KingdomID,
+		PlayerID:  p.PlayerID,
+		UserID:    p.UserID,
+		KingdomID: p.KingdomID,
 	}, true, nil
+}
+
+func (ps *PlayerStore) FindByUser(userID string) ([]*kingshot.Player, error) {
+	var players []*kingshot.Player
+	iter := ps.Client.Collection("players").Where("userID", "==", userID).Documents(context.Background())
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var p player
+		if err := doc.DataTo(&p); err != nil {
+			// It might be better to log the error and continue
+			return nil, err
+		}
+		players = append(players, &kingshot.Player{
+			PlayerID:  p.PlayerID,
+			UserID:    p.UserID,
+			KingdomID: p.KingdomID,
+		})
+	}
+	return players, nil
 }
 
 func (ps *PlayerStore) AddPlayer(p *kingshot.Player) error {
 	internalPlayer := player{
 		PlayerID:  p.PlayerID,
-		DiscordID: p.ExternalID,
+		UserID:    p.UserID,
 		KingdomID: p.KingdomID,
 	}
 	_, err := ps.Client.Collection("players").Doc(p.PlayerID).Set(context.Background(), internalPlayer)

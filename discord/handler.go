@@ -102,9 +102,9 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 
 	req := kingshot.NewPlayerRequest{
-		PlayerID:   playerID,
-		KingdomID:  kingdomID,
-		ExternalID: i.Member.User.ID,
+		PlayerID:  playerID,
+		KingdomID: kingdomID,
+		UserID:    i.Member.User.ID,
 	}
 
 	result := svc.RegisterPlayer(req)

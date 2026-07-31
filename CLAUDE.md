@@ -32,7 +32,6 @@ This is a Go Discord bot for the NXG gaming server that manages KingShot gift co
 
 ```
 (root) package kingshot  — GiftCodeService, PlayerStore interface, result types, KingShot API client
-playerstore/csv/         — csvstore.Store: CSV-backed PlayerStore implementation
 discord/                 — Discord interaction/message handlers wrapping GiftCodeService
 cmd/discord/             — Binary entry point: flag parsing, dependency wiring
 ```
@@ -44,12 +43,13 @@ cmd/discord/             — Binary entry point: flag parsing, dependency wiring
 - Interacts with the KingShot API (`login`, `redeemGiftCode`)
 - Returns structured result types (`CodeResult`, `RegisterResult`) — no Discord-specific formatting
 
-`PlayerStore` is an interface so the backing store can be swapped (e.g. CSV today, BoltDB later):
+`PlayerStore` is an interface so the backing store can be swapped (e.g. Firestore today):
 ```go
 type PlayerStore interface {
-    PlayerIDs() ([]string, error)
-    FindByPlayerID(playerID string) (externalID string, found bool, err error)
-    AddPlayer(playerID, externalID string) error
+    Players() ([]*Player, error)
+    FindByPlayerID(playerID string) (player *Player, found bool, err error)
+    FindByUser(userID string) ([]*Player, error)
+    AddPlayer(req NewPlayerRequest) error
 }
 ```
 
@@ -60,7 +60,7 @@ type PlayerStore interface {
 `cmd/discord/main.go` builds dependencies in this order:
 
 ```go
-store := csvstore.New(*playerIDFile)
+store, err := firestore.NewPlayerStore(os.Getenv("GCP_PROJECT_ID"))
 svc   := kingshot.New(store, activeCodeList...)
 discord.Register(session, svc)
 commands := discord.GiftCodeCommands()
@@ -75,7 +75,6 @@ Create a `.env` file in the project root:
 
 ```
 bot_token=YOUR_DISCORD_BOT_TOKEN
-player_id_file=player_ids.csv       # optional, defaults to player_ids.csv
 active_codes=CODE1,CODE2            # optional pre-loaded codes
 ```
 

@@ -22,7 +22,8 @@ func main() {
 
 	fs := flag.NewFlagSet("", flag.ContinueOnError)
 	var (
-		token = fs.String("bot_token", "", "bot authentication token")
+		token             = fs.String("bot_token", "", "bot authentication token")
+		firestore_project = fs.String("firestore_project_id", "", "project ID for Firestore")
 	)
 
 	if err := ff.Parse(fs,
@@ -45,7 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := firestore.NewPlayerStore(os.Getenv("GCP_PROJECT_ID"))
+	store, err := firestore.NewPlayerStore(*firestore_project)
 	if err != nil {
 		logger.Log("failed to create firestore client", "error", err)
 		os.Exit(1)

@@ -6,7 +6,7 @@ type CodeResult struct {
 	AlreadyActive  bool
 	AlreadyExpired bool
 	Invalid        bool
-	LoginFailed    bool
+	InvalidPlayer  bool
 	StoreError     error
 	APIError       error
 	Added          bool

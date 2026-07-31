@@ -21,14 +21,27 @@ func Register(s *discordgo.Session, svc *kingshot.GiftCodeService) {
 func GiftCodeCommands() []*discordgo.ApplicationCommand {
 	return []*discordgo.ApplicationCommand{
 		{
-			Name:        "register",
-			Description: "Register your KingShot player ID",
+			Name:        "player",
+			Description: "Player-related commands",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "player-id",
-					Description: "Your KingShot player ID",
-					Required:    true,
+					Name:        "register",
+					Description: "Register your KingShot player ID",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "player-id",
+							Description: "Your KingShot Player ID",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "kingdom-id",
+							Description: "Your Kingdom ID",
+							Required:    true,
+						},
+					},
 				},
 			},
 		},
@@ -54,9 +67,14 @@ func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session
 		if i.Type != discordgo.InteractionApplicationCommand {
 			return
 		}
+
 		switch i.ApplicationCommandData().Name {
-		case "register":
-			handleRegisterPlayer(s, i, svc)
+		case "player":
+			subcommand := i.ApplicationCommandData().Options[0].Name
+			switch subcommand {
+			case "register":
+				handleRegisterPlayer(s, i, svc)
+			}
 		case "code":
 			handleAddCode(s, i, svc)
 		}
@@ -72,10 +90,24 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
-	playerID := i.ApplicationCommandData().Options[0].StringValue()
-	discordID := i.Member.User.ID
+	options := i.ApplicationCommandData().Options[0].Options
+	var playerID, kingdomID string
+	for _, opt := range options {
+		switch opt.Name {
+		case "player-id":
+			playerID = opt.StringValue()
+		case "kingdom-id":
+			kingdomID = opt.StringValue()
+		}
+	}
 
-	result := svc.RegisterPlayer(playerID, discordID)
+	req := kingshot.NewPlayerRequest{
+		PlayerID:   playerID,
+		KingdomID:  kingdomID,
+		ExternalID: i.Member.User.ID,
+	}
+
+	result := svc.RegisterPlayer(req)
 	reply(s, i, formatRegisterResult(result))
 }
 

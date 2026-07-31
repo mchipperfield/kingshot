@@ -16,7 +16,6 @@ import (
 
 // API endpoints and signing key for the KingShot gift code service.
 const (
-	defaultLoginURL  = "https://kingshot-giftcode.centurygame.com/api/player"
 	defaultRedeemURL = "https://kingshot-giftcode.centurygame.com/api/gift_code"
 	Key              = "mN4!pQs6JrYwV9"
 )
@@ -72,33 +71,11 @@ func interpretRedeemResult(errCode ErrCode) redeemOutcome {
 	}
 }
 
-// login authenticates fid with the KingShot API.
-func (s *GiftCodeService) login(fid string) (*LoginResponse, error) {
-	data := map[string]string{
-		"fid":  fid,
-		"time": fmt.Sprintf("%d", time.Now().Unix()),
-	}
-	payload, err := EncodePayload(data)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.client.Post(s.loginURL, "application/json", strings.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var loginResp LoginResponse
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return nil, fmt.Errorf("failed to decode login response: %w", err)
-	}
-	return &loginResp, nil
-}
-
 // redeemGiftCode submits a redemption request for fid and cdk.
-func (s *GiftCodeService) redeemGiftCode(fid, cdk string) (*RedeemResponse, error) {
+func (s *GiftCodeService) redeemGiftCode(playerID, kingdomID, cdk string) (*RedeemResponse, error) {
 	data := map[string]string{
-		"fid":  fid,
+		"fid":  playerID,
+		"kid":  kingdomID,
 		"cdk":  cdk,
 		"time": fmt.Sprintf("%d", time.Now().Unix()),
 	}
@@ -154,13 +131,6 @@ func (e *ErrCode) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	return fmt.Errorf("err_code is not a string or a number: %s", data)
-}
-
-type LoginResponse struct {
-	Code    int     `json:"code"`
-	Message string  `json:"msg"`
-	Data    any     `json:"data"`
-	ErrCode ErrCode `json:"err_code"`
 }
 
 type RedeemResponse struct {

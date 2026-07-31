@@ -9,7 +9,7 @@ import (
 )
 
 // TestGiftCodeCommands verifies that the command list contains exactly the
-// /register and /code commands, each with at least one required option.
+// /player and /code commands, each with at least one required option.
 func TestGiftCodeCommands(t *testing.T) {
 	cmds := GiftCodeCommands()
 
@@ -25,7 +25,7 @@ func TestGiftCodeCommands(t *testing.T) {
 		}
 	}
 
-	for _, want := range []string{"register", "code"} {
+	for _, want := range []string{"player", "code"} {
 		if !names[want] {
 			t.Errorf("expected command %q, not found in %v", want, names)
 		}
@@ -134,9 +134,9 @@ func TestFormatCodeResult(t *testing.T) {
 			"not valid",
 		},
 		{
-			"login failed",
-			kingshot.CodeResult{Code: "X", LoginFailed: true},
-			"unable to login",
+			"invalid player",
+			kingshot.CodeResult{Code: "X", InvalidPlayer: true},
+			"player is invalid",
 		},
 		{
 			"no players",

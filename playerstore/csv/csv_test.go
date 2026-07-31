@@ -3,6 +3,8 @@ package csvstore
 import (
 	"os"
 	"testing"
+
+	"github.com/mchipperfield/kingshot"
 )
 
 // writeTempCSV writes content to a temporary CSV file and returns its path.
@@ -19,60 +21,66 @@ func writeTempCSV(t *testing.T, content string) string {
 	return f.Name()
 }
 
-func TestStore_PlayerIDs(t *testing.T) {
-	t.Run("valid CSV returns player IDs in file order", func(t *testing.T) {
-		store := New(writeTempCSV(t, "player1,discord1\nplayer2,discord2\n"))
-		ids, err := store.PlayerIDs()
+func TestStore_Players(t *testing.T) {
+	t.Run("valid CSV returns players in file order", func(t *testing.T) {
+		store := New(writeTempCSV(t, "player1,discord1,k1\nplayer2,discord2,k2\n"))
+		players, err := store.Players()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := []string{"player1", "player2"}
-		if len(ids) != len(want) {
-			t.Fatalf("got %d IDs, want %d: %v", len(ids), len(want), ids)
+		want := []*kingshot.Player{
+			{PlayerID: "player1", ExternalID: "discord1", KingdomID: "k1"},
+			{PlayerID: "player2", ExternalID: "discord2", KingdomID: "k2"},
 		}
-		for i, id := range ids {
-			if id != want[i] {
-				t.Errorf("ids[%d] = %q, want %q", i, id, want[i])
+		if len(players) != len(want) {
+			t.Fatalf("got %d players, want %d: %v", len(players), len(want), players)
+		}
+		for i, p := range players {
+			if p.PlayerID != want[i].PlayerID || p.ExternalID != want[i].ExternalID || p.KingdomID != want[i].KingdomID {
+				t.Errorf("players[%d] = %+v, want %+v", i, p, want[i])
 			}
 		}
 	})
 
 	t.Run("empty file returns empty slice", func(t *testing.T) {
 		store := New(writeTempCSV(t, ""))
-		ids, err := store.PlayerIDs()
+		players, err := store.Players()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(ids) != 0 {
-			t.Errorf("expected empty slice, got %v", ids)
+		if len(players) != 0 {
+			t.Errorf("expected empty slice, got %v", players)
 		}
 	})
 
 	t.Run("non-existent file is created and returns empty slice", func(t *testing.T) {
 		store := New(t.TempDir() + "/new-players.csv")
-		ids, err := store.PlayerIDs()
+		players, err := store.Players()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(ids) != 0 {
-			t.Errorf("expected empty slice, got %v", ids)
+		if len(players) != 0 {
+			t.Errorf("expected empty slice, got %v", players)
 		}
 	})
 }
 
 func TestStore_FindByPlayerID(t *testing.T) {
-	store := New(writeTempCSV(t, "player1,discord1\nplayer2,discord2\n"))
+	store := New(writeTempCSV(t, "player1,discord1,k1\nplayer2,discord2,k2\n"))
 
 	t.Run("found", func(t *testing.T) {
-		externalID, found, err := store.FindByPlayerID("player1")
+		player, found, err := store.FindByPlayerID("player1")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !found {
 			t.Fatal("expected found=true")
 		}
-		if externalID != "discord1" {
-			t.Errorf("externalID = %q, want %q", externalID, "discord1")
+		if player.ExternalID != "discord1" {
+			t.Errorf("ExternalID = %q, want %q", player.ExternalID, "discord1")
+		}
+		if player.KingdomID != "k1" {
+			t.Errorf("KingdomID = %q, want %q", player.KingdomID, "k1")
 		}
 	})
 
@@ -88,52 +96,56 @@ func TestStore_FindByPlayerID(t *testing.T) {
 }
 
 func TestStore_AddPlayer(t *testing.T) {
-	store := New(writeTempCSV(t, "player1,discord1\n"))
+	store := New(writeTempCSV(t, "player1,discord1,k1\n"))
 
-	if err := store.AddPlayer("player2", "discord2"); err != nil {
+	playerToAdd := &kingshot.Player{PlayerID: "player2", ExternalID: "discord2", KingdomID: "k2"}
+	if err := store.AddPlayer(playerToAdd); err != nil {
 		t.Fatalf("AddPlayer failed: %v", err)
 	}
 
-	ids, err := store.PlayerIDs()
+	players, err := store.Players()
 	if err != nil {
-		t.Fatalf("unexpected error reading IDs: %v", err)
+		t.Fatalf("unexpected error reading players: %v", err)
 	}
-	if len(ids) != 2 {
-		t.Fatalf("expected 2 IDs, got %d: %v", len(ids), ids)
+	if len(players) != 2 {
+		t.Fatalf("expected 2 players, got %d: %v", len(players), players)
 	}
 
-	externalID, found, err := store.FindByPlayerID("player2")
+	player, found, err := store.FindByPlayerID("player2")
 	if err != nil {
 		t.Fatalf("unexpected error in FindByPlayerID: %v", err)
 	}
 	if !found {
 		t.Fatal("expected player2 to be found after AddPlayer")
 	}
-	if externalID != "discord2" {
-		t.Errorf("externalID = %q, want %q", externalID, "discord2")
+	if player.ExternalID != "discord2" {
+		t.Errorf("ExternalID = %q, want %q", player.ExternalID, "discord2")
+	}
+	if player.KingdomID != "k2" {
+		t.Errorf("KingdomID = %q, want %q", player.KingdomID, "k2")
 	}
 }
 
 func TestStore_AddPlayer_doesNotDuplicate(t *testing.T) {
 	store := New(writeTempCSV(t, ""))
 
-	if err := store.AddPlayer("player1", "discord1"); err != nil {
+	if err := store.AddPlayer(&kingshot.Player{PlayerID: "player1", ExternalID: "discord1", KingdomID: "k1"}); err != nil {
 		t.Fatalf("first AddPlayer failed: %v", err)
 	}
 
 	// AddPlayer does not deduplicate — the service layer always calls
 	// FindByPlayerID first and only calls AddPlayer for new players.
 	// This test confirms AddPlayer faithfully writes what it is given.
-	if err := store.AddPlayer("player1", "discord1b"); err != nil {
+	if err := store.AddPlayer(&kingshot.Player{PlayerID: "player1", ExternalID: "discord1b", KingdomID: "k1b"}); err != nil {
 		t.Fatalf("second AddPlayer failed: %v", err)
 	}
 
-	ids, err := store.PlayerIDs()
+	players, err := store.Players()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Two rows — deduplication is the caller's responsibility.
-	if len(ids) != 2 {
-		t.Fatalf("expected 2 rows, got %d: %v", len(ids), ids)
+	if len(players) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %v", len(players), players)
 	}
 }

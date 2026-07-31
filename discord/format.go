@@ -41,8 +41,8 @@ func formatCodeResult(r kingshot.CodeResult) string {
 		return fmt.Sprintf("Code `%s` has expired and cannot be re-added.", r.Code)
 	case r.Invalid:
 		return fmt.Sprintf("Code `%s` is not valid and was not added.", r.Code)
-	case r.LoginFailed:
-		return fmt.Sprintf("Code `%s` could not be validated - unable to login.", r.Code)
+	case r.InvalidPlayer:
+		return fmt.Sprintf("Code `%s` could not be validated as the player is invalid.", r.Code)
 	case r.Added && len(r.PlayerResults) == 0:
 		return fmt.Sprintf("There are no registered players, but code `%s` has been added to the active list.", r.Code)
 	}

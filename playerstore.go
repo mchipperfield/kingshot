@@ -7,6 +7,7 @@ type Player struct {
 	PlayerID  string `firestore:"playerID"`
 	UserID    string `firestore:"userID"`
 	KingdomID string `firestore:"kingdomID"`
+	GuildID   string `firestore:"guildID"`
 }
 
 // PlayerStore manages persistent storage of registered players.

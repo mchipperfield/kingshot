@@ -7,13 +7,6 @@ type Player struct {
 	KingdomID string `firestore:"kingdomID"`
 }
 
-// UpdatePlayerKingdomRequest is the set of parameters for updating a player's kingdom.
-type UpdatePlayerKingdomRequest struct {
-	PlayerID     string
-	NewKingdomID string
-	GuildID      string
-}
-
 // PlayerStore manages persistent storage of registered players.
 type PlayerStore interface {
 	// Players returns all registered players in storage order.
@@ -26,5 +19,5 @@ type PlayerStore interface {
 	// AddPlayer stores a new player.
 	AddPlayer(req NewPlayerRequest) error
 	// UpdatePlayerKingdom updates the kingdom for a given player.
-	UpdatePlayerKingdom(req UpdatePlayerKingdomRequest) error
+	UpdatePlayerKingdom(req TransferPlayerRequest) error
 }

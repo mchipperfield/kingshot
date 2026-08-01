@@ -217,11 +217,7 @@ func (s *GiftCodeService) TransferPlayer(req TransferPlayerRequest) TransferPlay
 		return TransferPlayerResult{MaxPlayersForNewKingdomReached: true}
 	}
 
-	if err := s.store.UpdatePlayerKingdom(UpdatePlayerKingdomRequest{
-		PlayerID:     req.PlayerID,
-		NewKingdomID: req.NewKingdomID,
-		GuildID:      req.GuildID,
-	}); err != nil {
+	if err := s.store.UpdatePlayerKingdom(req); err != nil {
 		slog.Error("failed to update player kingdom", "error", err)
 		return TransferPlayerResult{StoreError: err}
 	}

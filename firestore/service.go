@@ -130,7 +130,7 @@ func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
 	return err
 }
 
-func (ps *PlayerStore) UpdatePlayerKingdom(req kingshot.UpdatePlayerKingdomRequest) error {
+func (ps *PlayerStore) UpdatePlayerKingdom(req kingshot.TransferPlayerRequest) error {
 	entry := historyEntry{
 		GuildID:   req.GuildID,
 		Timestamp: time.Now(),

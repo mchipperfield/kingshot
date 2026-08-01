@@ -71,7 +71,7 @@ func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
 	return nil
 }
 
-func (m *mapStore) UpdatePlayerKingdom(req UpdatePlayerKingdomRequest) error {
+func (m *mapStore) UpdatePlayerKingdom(req TransferPlayerRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p, ok := m.players[req.PlayerID]; ok {
@@ -84,11 +84,11 @@ func (m *mapStore) UpdatePlayerKingdom(req UpdatePlayerKingdomRequest) error {
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
-func (e *errStore) Players() ([]*Player, error)                  { return nil, e.err }
-func (e *errStore) FindByPlayerID(string) (*Player, bool, error) { return nil, false, e.err }
-func (e *errStore) FindByUser(string) ([]*Player, error)         { return nil, e.err }
-func (e *errStore) AddPlayer(NewPlayerRequest) error                      { return e.err }
-func (e *errStore) UpdatePlayerKingdom(UpdatePlayerKingdomRequest) error      { return e.err }
+func (e *errStore) Players() ([]*Player, error)                     { return nil, e.err }
+func (e *errStore) FindByPlayerID(string) (*Player, bool, error)    { return nil, false, e.err }
+func (e *errStore) FindByUser(string) ([]*Player, error)            { return nil, e.err }
+func (e *errStore) AddPlayer(NewPlayerRequest) error                { return e.err }
+func (e *errStore) UpdatePlayerKingdom(TransferPlayerRequest) error { return e.err }
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.

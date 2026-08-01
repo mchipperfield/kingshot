@@ -185,8 +185,7 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	newCode := i.ApplicationCommandData().Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
-	defer cancel()
+	ctx := context.Background()
 
 	result := svc.ProcessNewCode(ctx, newCode)
 	if result.Added && len(result.PlayerResults) > 0 {

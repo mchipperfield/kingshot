@@ -123,6 +123,13 @@ func (s *GiftCodeService) registerPlayer(req NewPlayerRequest) RegisterResult {
 		return RegisterResult{AlreadyOther: true}
 	}
 
+	return s.addNewPlayer(req)
+}
+
+// addNewPlayer stores req in the store and redeems active codes for the new player.
+// Callers must have already verified that the player does not exist.
+// Caller must hold s.mu.
+func (s *GiftCodeService) addNewPlayer(req NewPlayerRequest) RegisterResult {
 	userPlayers, err := s.store.FindByUser(req.UserID)
 	if err != nil {
 		slog.Error("failed to look up players by user for registration", "error", err)
@@ -180,7 +187,7 @@ func (s *GiftCodeService) TransferPlayer(req TransferPlayerRequest) TransferPlay
 			UserID:    req.UserID,
 			GuildID:   req.GuildID,
 		}
-		regResult := s.registerPlayer(registerReq)
+		regResult := s.addNewPlayer(registerReq)
 		return TransferPlayerResult{
 			PlayerNotFound:     true,
 			RegistrationResult: &regResult,
@@ -210,7 +217,7 @@ func (s *GiftCodeService) TransferPlayer(req TransferPlayerRequest) TransferPlay
 		return TransferPlayerResult{MaxPlayersForNewKingdomReached: true}
 	}
 
-	if err := s.store.UpdatePlayerKingdom(req.PlayerID, req.NewKingdomID, req.GuildID); err != nil {
+	if err := s.store.UpdatePlayerKingdom(req); err != nil {
 		slog.Error("failed to update player kingdom", "error", err)
 		return TransferPlayerResult{StoreError: err}
 	}

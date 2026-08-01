@@ -130,14 +130,14 @@ func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
 	return err
 }
 
-func (ps *PlayerStore) UpdatePlayerKingdom(playerID, newKingdomID, guildID string) error {
+func (ps *PlayerStore) UpdatePlayerKingdom(req kingshot.TransferPlayerRequest) error {
 	entry := historyEntry{
-		GuildID:   guildID,
+		GuildID:   req.GuildID,
 		Timestamp: time.Now(),
 		Action:    "transfer",
 	}
-	_, err := ps.Client.Collection("players").Doc(playerID).Update(context.Background(), []firestore.Update{
-		{Path: "kingdom_id", Value: newKingdomID},
+	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Update(context.Background(), []firestore.Update{
+		{Path: "kingdom_id", Value: req.NewKingdomID},
 		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})
 	return err

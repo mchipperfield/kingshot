@@ -71,11 +71,11 @@ func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
 	return nil
 }
 
-func (m *mapStore) UpdatePlayerKingdom(playerID, newKingdomID, guildID string) error {
+func (m *mapStore) UpdatePlayerKingdom(req TransferPlayerRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if p, ok := m.players[playerID]; ok {
-		p.KingdomID = newKingdomID
+	if p, ok := m.players[req.PlayerID]; ok {
+		p.KingdomID = req.NewKingdomID
 		// The mock doesn't need to track history.
 	}
 	return nil
@@ -84,11 +84,11 @@ func (m *mapStore) UpdatePlayerKingdom(playerID, newKingdomID, guildID string) e
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
-func (e *errStore) Players() ([]*Player, error)                  { return nil, e.err }
-func (e *errStore) FindByPlayerID(string) (*Player, bool, error) { return nil, false, e.err }
-func (e *errStore) FindByUser(string) ([]*Player, error)         { return nil, e.err }
-func (e *errStore) AddPlayer(NewPlayerRequest) error                      { return e.err }
-func (e *errStore) UpdatePlayerKingdom(string, string, string) error      { return e.err }
+func (e *errStore) Players() ([]*Player, error)                     { return nil, e.err }
+func (e *errStore) FindByPlayerID(string) (*Player, bool, error)    { return nil, false, e.err }
+func (e *errStore) FindByUser(string) ([]*Player, error)            { return nil, e.err }
+func (e *errStore) AddPlayer(NewPlayerRequest) error                { return e.err }
+func (e *errStore) UpdatePlayerKingdom(TransferPlayerRequest) error { return e.err }
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.

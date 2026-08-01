@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -182,12 +183,17 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	}
 
 	newCode := i.ApplicationCommandData().Options[0].StringValue()
-	reply(s, i, fmt.Sprintf("Code %s received: processing...", newCode))
+	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
-	defer cancel()
+	ctx := context.Background()
 
 	result := svc.ProcessNewCode(ctx, newCode)
+	if result.Added && len(result.PlayerResults) > 0 {
+		posted := postGuildRedemptionResults(s, result.Code, result.PlayerResults)
+		reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))
+		return
+	}
+
 	formatted := formatCodeResult(result)
 	for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
@@ -343,4 +349,63 @@ func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	result := svc.UnlinkPlayer(ctx, req)
 	respondFinal(s, i, formatUnlinkResult(result))
+}
+
+func postGuildRedemptionResults(s *discordgo.Session, code string, results []kingshot.PlayerRedeemResult) []string {
+	grouped := make(map[string][]kingshot.PlayerRedeemResult)
+	for _, result := range results {
+		grouped[result.GuildID] = append(grouped[result.GuildID], result)
+	}
+
+	guildIDs := make([]string, 0, len(grouped))
+	for guildID := range grouped {
+		guildIDs = append(guildIDs, guildID)
+	}
+	slices.Sort(guildIDs)
+
+	postedGuilds := make([]string, 0, len(guildIDs))
+	for _, guildID := range guildIDs {
+		guildResults := grouped[guildID]
+		channelID, err := guildRedemptionChannel(s, guildID)
+		if err != nil {
+			slog.Error("failed to resolve guild channel for redemption results", "error", err, "guild_id", guildID, "code", code)
+			continue
+		}
+
+		lines := make([]string, 0, len(guildResults))
+		for _, result := range guildResults {
+			lines = append(lines, fmt.Sprintf("Player `%s`: %s", result.PlayerID, result.Message))
+		}
+		message := formatRedemptionReport(code, len(guildResults), lines)
+		if _, err := s.ChannelMessageSend(channelID, message); err != nil {
+			slog.Error("failed to post guild redemption results", "error", err, "guild_id", guildID, "channel_id", channelID, "code", code)
+			continue
+		}
+		postedGuilds = append(postedGuilds, guildID)
+	}
+
+	return postedGuilds
+}
+
+func guildRedemptionChannel(s *discordgo.Session, guildID string) (string, error) {
+	guild, err := s.Guild(guildID)
+	if err != nil {
+		return "", err
+	}
+	if guild.SystemChannelID != "" {
+		return guild.SystemChannelID, nil
+	}
+	if guild.PublicUpdatesChannelID != "" {
+		return guild.PublicUpdatesChannelID, nil
+	}
+	channels, err := s.GuildChannels(guildID)
+	if err != nil {
+		return "", err
+	}
+	for _, channel := range channels {
+		if channel.Type == discordgo.ChannelTypeGuildText {
+			return channel.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no suitable channel found for guild %s", guildID)
 }

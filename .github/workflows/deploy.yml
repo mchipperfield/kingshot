@@ -90,6 +90,6 @@ jobs:
           sudo mv ~/kingshot.tmp ${{ secrets.VM_DEST_PATH }}/kingshot
           sudo chmod +x ${{ secrets.VM_DEST_PATH }}/kingshot
           echo "Restarting service..."
-          sudo systemctl restart goafbot.service
+          sudo systemctl restart kingshot.service
           echo "Deployment complete."
           '

@@ -46,6 +46,7 @@ type TransferPlayerResult struct {
 	UserID                         string
 	PlayerNotFound                 bool
 	NotYourPlayer                  bool
+	AlreadyInKingdom               bool
 	MaxPlayersForNewKingdomReached bool
 	StoreError                     error
 	Success                        bool

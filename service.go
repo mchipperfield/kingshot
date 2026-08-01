@@ -205,6 +205,10 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 		return TransferPlayerResult{NotYourPlayer: true}
 	}
 
+	if player.KingdomID == req.NewKingdomID {
+		return TransferPlayerResult{AlreadyInKingdom: true}
+	}
+
 	// Check if the new kingdom has space
 	userPlayers, err := s.store.FindByUser(ctx, req.UserID)
 	if err != nil {

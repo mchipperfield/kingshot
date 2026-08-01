@@ -451,7 +451,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		}
 	})
 
-	t.Run("transfer to same kingdom with 2 players should be allowed", func(t *testing.T) {
+	t.Run("transfer to current kingdom is rejected", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
@@ -459,8 +459,8 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		svc := &GiftCodeService{store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
 		result := svc.TransferPlayer(t.Context(), req)
-		if !result.Success {
-			t.Fatalf("expected success, got %+v", result)
+		if !result.AlreadyInKingdom {
+			t.Fatalf("expected AlreadyInKingdom=true, got %+v", result)
 		}
 	})
 }

@@ -100,6 +100,8 @@ func formatTransferResult(r kingshot.TransferPlayerResult) string {
 		return "Error transferring player. Please try again later."
 	case r.NotYourPlayer:
 		return "This player is not registered to your Discord account."
+	case r.AlreadyInKingdom:
+		return "This player is already in that kingdom."
 	case r.MaxPlayersForNewKingdomReached:
 		return "You have already registered the maximum number of players for the new kingdom."
 	case r.PlayerNotFound:

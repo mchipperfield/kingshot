@@ -77,6 +77,7 @@ func (m *mapStore) AddPlayer(ctx context.Context, req NewPlayerRequest) error {
 		PlayerID:  req.PlayerID,
 		UserID:    req.UserID,
 		KingdomID: req.KingdomID,
+		GuildID:   req.GuildID,
 	}
 	m.players[player.PlayerID] = player
 	delete(m.unlinked, player.PlayerID)
@@ -88,6 +89,7 @@ func (m *mapStore) UpdatePlayerKingdom(ctx context.Context, req TransferPlayerRe
 	defer m.mu.Unlock()
 	if p, ok := m.players[req.PlayerID]; ok {
 		p.KingdomID = req.NewKingdomID
+		p.GuildID = req.GuildID
 		// The mock doesn't need to track history.
 	}
 	return nil
@@ -416,23 +418,23 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 func TestGiftCodeService_TransferPlayer(t *testing.T) {
 	t.Run("successful transfer", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "g1"},
 		})
 		svc := &GiftCodeService{store: store}
-		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2", GuildID: "g2"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.Success {
 			t.Fatalf("expected success, got %+v", result)
 		}
-		if p, _, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" {
-			t.Errorf("player kingdom not updated, got %s", p.KingdomID)
+		if p, _, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" || p.GuildID != "g2" {
+			t.Errorf("player transfer not fully updated, got kingdom=%s guild=%s", p.KingdomID, p.GuildID)
 		}
 	})
 
 	t.Run("player not found, registers new player", func(t *testing.T) {
 		store := newMapStore(nil)
 		svc := &GiftCodeService{store: store, client: &http.Client{}}
-		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
 			t.Fatalf("expected player not found, got %+v", result)
@@ -443,17 +445,17 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if !result.RegistrationResult.Success {
 			t.Errorf("expected registration to be successful, got %+v", result.RegistrationResult)
 		}
-		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" {
+		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" || p.GuildID != "g1" {
 			t.Errorf("player not added to store correctly")
 		}
 	})
 
 	t.Run("blank owner also registers new player", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0"},
+			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0", GuildID: "g0"},
 		})
 		svc := &GiftCodeService{store: store, client: &http.Client{}}
-		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
 			t.Fatalf("expected PlayerNotFound=true, got %+v", result)
@@ -462,7 +464,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 			t.Fatalf("expected successful registration, got %+v", result.RegistrationResult)
 		}
 		p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-		if !found || p.UserID != "u1" || p.KingdomID != "k1" {
+		if !found || p.UserID != "u1" || p.KingdomID != "k1" || p.GuildID != "g1" {
 			t.Errorf("player not re-registered correctly: found=%v player=%+v", found, p)
 		}
 	})
@@ -573,11 +575,11 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 // returning AlreadyOther/AlreadySelf, allowing accounts to change hands.
 func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 	store := newMapStore(map[string]*Player{
-		"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+		"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "old-guild"},
 	})
 	store.unlinked["p1"] = true
 	svc := &GiftCodeService{store: store, client: &http.Client{}}
-	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2"}
+	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
 	result := svc.RegisterPlayer(t.Context(), req)
 	if !result.Success {
 		t.Fatalf("expected success, got %+v", result)
@@ -589,14 +591,17 @@ func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 	if p.UserID != "u2" {
 		t.Errorf("expected player to be re-linked to u2, got %q", p.UserID)
 	}
+	if p.GuildID != "new-guild" {
+		t.Errorf("expected player guild to be updated to new-guild, got %q", p.GuildID)
+	}
 }
 
 func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 	store := newMapStore(map[string]*Player{
-		"p1": {PlayerID: "p1", UserID: "", KingdomID: "k1"},
+		"p1": {PlayerID: "p1", UserID: "", KingdomID: "k1", GuildID: "old-guild"},
 	})
 	svc := &GiftCodeService{store: store, client: &http.Client{}}
-	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2"}
+	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
 	result := svc.RegisterPlayer(t.Context(), req)
 	if !result.Success {
 		t.Fatalf("expected success, got %+v", result)
@@ -605,11 +610,10 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 	if !found {
 		t.Fatal("expected player to exist in store")
 	}
-	if p.UserID != "u2" || p.KingdomID != "k2" {
+	if p.UserID != "u2" || p.KingdomID != "k2" || p.GuildID != "new-guild" {
 		t.Errorf("expected player to be reclaimed, got %+v", p)
 	}
 }
-
 
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.

@@ -163,6 +163,7 @@ func (ps *PlayerStore) UpdatePlayerKingdom(ctx context.Context, req kingshot.Tra
 	}
 	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Update(ctx, []firestore.Update{
 		{Path: "kingdom_id", Value: req.NewKingdomID},
+		{Path: "guild_id", Value: req.GuildID},
 		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})
 	return err

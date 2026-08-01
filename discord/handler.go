@@ -4,13 +4,19 @@
 package discord
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
 )
+
+// serviceCallTimeout bounds how long a handler will wait on svc, so a stalled
+// store or API call fails fast instead of leaving the interaction hanging.
+const serviceCallTimeout = 10 * time.Second
 
 // Register adds the KingShot interaction handler to s once at startup.
 func Register(s *discordgo.Session, svc *kingshot.GiftCodeService) {
@@ -119,6 +125,9 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+
 	options := i.ApplicationCommandData().Options[0].Options
 	var playerID, kingdomID string
 	for _, opt := range options {
@@ -137,7 +146,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		GuildID:   i.Interaction.GuildID,
 	}
 
-	result := svc.RegisterPlayer(req)
+	result := svc.RegisterPlayer(ctx, req)
 	reply(s, i, formatRegisterResult(result))
 }
 
@@ -158,7 +167,10 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	newCode := i.ApplicationCommandData().Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing...", newCode))
 
-	result := svc.ProcessNewCode(newCode)
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+
+	result := svc.ProcessNewCode(ctx, newCode)
 	formatted := formatCodeResult(result)
 	for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
@@ -174,7 +186,10 @@ func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, sv
 		return
 	}
 
-	players, err := svc.GetPlayersByUser(i.Member.User.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+
+	players, err := svc.GetPlayersByUser(ctx, i.Member.User.ID)
 	if err != nil {
 		slog.Error("failed to get players for user", "error", err, "user_id", i.Member.User.ID)
 		reply(s, i, "Error fetching your players.")
@@ -204,6 +219,9 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+
 	options := i.ApplicationCommandData().Options[0].Options
 	var playerID, newKingdomID string
 	for _, opt := range options {
@@ -222,6 +240,6 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		GuildID:      i.GuildID,
 	}
 
-	result := svc.TransferPlayer(req)
+	result := svc.TransferPlayer(ctx, req)
 	reply(s, i, formatTransferResult(result))
 }

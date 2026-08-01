@@ -1,5 +1,7 @@
 package kingshot
 
+import "context"
+
 // Player holds all the information for a given player
 type Player struct {
 	PlayerID  string `firestore:"playerID"`
@@ -8,16 +10,17 @@ type Player struct {
 }
 
 // PlayerStore manages persistent storage of registered players.
+// Implementations must respect ctx cancellation/deadlines for any I/O.
 type PlayerStore interface {
 	// Players returns all registered players in storage order.
-	Players() ([]*Player, error)
+	Players(ctx context.Context) ([]*Player, error)
 	// FindByPlayerID looks up the player by their playerID. found is false when
 	// the player is not registered.
-	FindByPlayerID(playerID string) (player *Player, found bool, err error)
+	FindByPlayerID(ctx context.Context, playerID string) (player *Player, found bool, err error)
 	// FindByUser returns all players registered to a given user.
-	FindByUser(userID string) ([]*Player, error)
+	FindByUser(ctx context.Context, userID string) ([]*Player, error)
 	// AddPlayer stores a new player.
-	AddPlayer(req NewPlayerRequest) error
+	AddPlayer(ctx context.Context, req NewPlayerRequest) error
 	// UpdatePlayerKingdom updates the kingdom for a given player.
-	UpdatePlayerKingdom(req TransferPlayerRequest) error
+	UpdatePlayerKingdom(ctx context.Context, req TransferPlayerRequest) error
 }

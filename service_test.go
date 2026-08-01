@@ -1,6 +1,7 @@
 package kingshot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +31,7 @@ func newMapStore(initial map[string]*Player) *mapStore {
 	return &mapStore{players: players}
 }
 
-func (m *mapStore) Players() ([]*Player, error) {
+func (m *mapStore) Players(ctx context.Context) ([]*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	players := make([]*Player, 0, len(m.players))
@@ -40,14 +41,14 @@ func (m *mapStore) Players() ([]*Player, error) {
 	return players, nil
 }
 
-func (m *mapStore) FindByPlayerID(playerID string) (*Player, bool, error) {
+func (m *mapStore) FindByPlayerID(ctx context.Context, playerID string) (*Player, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, found := m.players[playerID]
 	return p, found, nil
 }
 
-func (m *mapStore) FindByUser(userID string) ([]*Player, error) {
+func (m *mapStore) FindByUser(ctx context.Context, userID string) ([]*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var userPlayers []*Player
@@ -59,7 +60,7 @@ func (m *mapStore) FindByUser(userID string) ([]*Player, error) {
 	return userPlayers, nil
 }
 
-func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
+func (m *mapStore) AddPlayer(ctx context.Context, req NewPlayerRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	player := &Player{
@@ -71,7 +72,7 @@ func (m *mapStore) AddPlayer(req NewPlayerRequest) error {
 	return nil
 }
 
-func (m *mapStore) UpdatePlayerKingdom(req TransferPlayerRequest) error {
+func (m *mapStore) UpdatePlayerKingdom(ctx context.Context, req TransferPlayerRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p, ok := m.players[req.PlayerID]; ok {
@@ -84,11 +85,15 @@ func (m *mapStore) UpdatePlayerKingdom(req TransferPlayerRequest) error {
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
-func (e *errStore) Players() ([]*Player, error)                     { return nil, e.err }
-func (e *errStore) FindByPlayerID(string) (*Player, bool, error)    { return nil, false, e.err }
-func (e *errStore) FindByUser(string) ([]*Player, error)            { return nil, e.err }
-func (e *errStore) AddPlayer(NewPlayerRequest) error                { return e.err }
-func (e *errStore) UpdatePlayerKingdom(TransferPlayerRequest) error { return e.err }
+func (e *errStore) Players(context.Context) ([]*Player, error)  { return nil, e.err }
+func (e *errStore) FindByPlayerID(context.Context, string) (*Player, bool, error) {
+	return nil, false, e.err
+}
+func (e *errStore) FindByUser(context.Context, string) ([]*Player, error) { return nil, e.err }
+func (e *errStore) AddPlayer(context.Context, NewPlayerRequest) error     { return e.err }
+func (e *errStore) UpdatePlayerKingdom(context.Context, TransferPlayerRequest) error {
+	return e.err
+}
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.
@@ -299,7 +304,7 @@ func TestInterpretRedeemResult(t *testing.T) {
 func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	t.Run("already active", func(t *testing.T) {
 		svc := &GiftCodeService{activeCodes: []string{"EXISTINGCODE"}, store: newMapStore(nil)}
-		result := svc.ProcessNewCode("EXISTINGCODE")
+		result := svc.ProcessNewCode(t.Context(), "EXISTINGCODE")
 		if !result.AlreadyActive {
 			t.Errorf("expected AlreadyActive=true, got %+v", result)
 		}
@@ -307,7 +312,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 
 	t.Run("already expired", func(t *testing.T) {
 		svc := &GiftCodeService{expiredCodes: []string{"EXPIREDCODE"}, store: newMapStore(nil)}
-		result := svc.ProcessNewCode("EXPIREDCODE")
+		result := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
 		if !result.AlreadyExpired {
 			t.Errorf("expected AlreadyExpired=true, got %+v", result)
 		}
@@ -315,7 +320,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		svc := &GiftCodeService{store: &errStore{errors.New("store error")}}
-		result := svc.ProcessNewCode("NEWCODE")
+		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
 		if result.StoreError == nil {
 			t.Error("expected StoreError to be set")
 		}
@@ -323,7 +328,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 
 	t.Run("no registered players adds code to active list", func(t *testing.T) {
 		svc := &GiftCodeService{store: newMapStore(nil)}
-		result := svc.ProcessNewCode("FRESHCODE")
+		result := svc.ProcessNewCode(t.Context(), "FRESHCODE")
 		if !result.Added {
 			t.Errorf("expected Added=true, got %+v", result)
 		}
@@ -342,11 +347,11 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		store := newMapStore(nil)
 		svc := &GiftCodeService{store: store, client: &http.Client{}}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"}
-		result := svc.RegisterPlayer(req)
+		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.Success {
 			t.Fatalf("expected success, got %+v", result)
 		}
-		if p, found, _ := store.FindByPlayerID("p1"); !found || p.UserID != "u1" {
+		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" {
 			t.Errorf("player not added to store correctly")
 		}
 	})
@@ -355,7 +360,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u1"}})
 		svc := &GiftCodeService{store: store}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.RegisterPlayer(req)
+		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.AlreadySelf {
 			t.Errorf("expected AlreadySelf=true, got %+v", result)
 		}
@@ -365,7 +370,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u2"}})
 		svc := &GiftCodeService{store: store}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.RegisterPlayer(req)
+		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.AlreadyOther {
 			t.Errorf("expected AlreadyOther=true, got %+v", result)
 		}
@@ -378,7 +383,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{store: store}
 		req := NewPlayerRequest{PlayerID: "p3", UserID: "u1", KingdomID: "k1"}
-		result := svc.RegisterPlayer(req)
+		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.MaxPlayersForKingdomReached {
 			t.Errorf("expected MaxPlayersForKingdomReached=true, got %+v", result)
 		}
@@ -392,11 +397,11 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
-		result := svc.TransferPlayer(req)
+		result := svc.TransferPlayer(t.Context(), req)
 		if !result.Success {
 			t.Fatalf("expected success, got %+v", result)
 		}
-		if p, _, _ := store.FindByPlayerID("p1"); p.KingdomID != "k2" {
+		if p, _, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" {
 			t.Errorf("player kingdom not updated, got %s", p.KingdomID)
 		}
 	})
@@ -405,7 +410,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		store := newMapStore(nil)
 		svc := &GiftCodeService{store: store, client: &http.Client{}}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
-		result := svc.TransferPlayer(req)
+		result := svc.TransferPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
 			t.Fatalf("expected player not found, got %+v", result)
 		}
@@ -415,7 +420,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if !result.RegistrationResult.Success {
 			t.Errorf("expected registration to be successful, got %+v", result.RegistrationResult)
 		}
-		if p, found, _ := store.FindByPlayerID("p1"); !found || p.UserID != "u1" {
+		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" {
 			t.Errorf("player not added to store correctly")
 		}
 	})
@@ -426,7 +431,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
-		result := svc.TransferPlayer(req)
+		result := svc.TransferPlayer(t.Context(), req)
 		if !result.NotYourPlayer {
 			t.Errorf("expected NotYourPlayer=true, got %+v", result)
 		}
@@ -440,7 +445,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
-		result := svc.TransferPlayer(req)
+		result := svc.TransferPlayer(t.Context(), req)
 		if !result.MaxPlayersForNewKingdomReached {
 			t.Errorf("expected MaxPlayersForNewKingdomReached=true, got %+v", result)
 		}
@@ -453,7 +458,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
-		result := svc.TransferPlayer(req)
+		result := svc.TransferPlayer(t.Context(), req)
 		if !result.Success {
 			t.Fatalf("expected success, got %+v", result)
 		}
@@ -469,7 +474,7 @@ func TestGiftCodeService_concurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			svc.ProcessNewCode(fmt.Sprintf("CODE%d", n))
+			svc.ProcessNewCode(t.Context(), fmt.Sprintf("CODE%d", n))
 		}(i)
 	}
 	wg.Wait()
@@ -523,7 +528,7 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := mockKingShotAPI(t, tt.redeemErrCode)
 			player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
-			got := svc.redeemForPlayer(player, "TESTCODE")
+			got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
 			if got != tt.wantMsg {
 				t.Errorf("got %q, want %q", got, tt.wantMsg)
 			}
@@ -543,7 +548,7 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 			store:     newMapStore(nil),
 		}
 		player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
-		got := svc.redeemForPlayer(player, "TESTCODE")
+		got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
 		if got != "Error redeeming code." {
 			t.Errorf("got %q, want %q", got, "Error redeeming code.")
 		}

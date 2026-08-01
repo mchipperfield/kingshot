@@ -1,6 +1,7 @@
 package kingshot
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -71,8 +72,9 @@ func interpretRedeemResult(errCode ErrCode) redeemOutcome {
 	}
 }
 
-// redeemGiftCode submits a redemption request for fid and cdk.
-func (s *GiftCodeService) redeemGiftCode(playerID, kingdomID, cdk string) (*RedeemResponse, error) {
+// redeemGiftCode submits a redemption request for fid and cdk. ctx cancellation
+// or deadline propagates through the rate limiter and the HTTP request.
+func (s *GiftCodeService) redeemGiftCode(ctx context.Context, playerID, kingdomID, cdk string) (*RedeemResponse, error) {
 	data := map[string]string{
 		"fid":  playerID,
 		"kid":  kingdomID,
@@ -83,7 +85,12 @@ func (s *GiftCodeService) redeemGiftCode(playerID, kingdomID, cdk string) (*Rede
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.client.Post(s.redeemURL, "application/json", strings.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.redeemURL, strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -40,9 +40,9 @@ func NewPlayerStore(projectId string) (*PlayerStore, error) {
 	}, nil
 }
 
-func (ps *PlayerStore) Players() ([]*kingshot.Player, error) {
+func (ps *PlayerStore) Players(ctx context.Context) ([]*kingshot.Player, error) {
 	var players []*kingshot.Player
-	iter := ps.Client.Collection("players").Documents(context.Background())
+	iter := ps.Client.Collection("players").Documents(ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -64,9 +64,9 @@ func (ps *PlayerStore) Players() ([]*kingshot.Player, error) {
 	return players, nil
 }
 
-func (ps *PlayerStore) FindByPlayerID(playerID string) (*kingshot.Player, bool, error) {
+func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*kingshot.Player, bool, error) {
 	docRef := ps.Client.Collection("players").Doc(playerID)
-	docSnap, err := docRef.Get(context.Background())
+	docSnap, err := docRef.Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return nil, false, nil
@@ -86,9 +86,9 @@ func (ps *PlayerStore) FindByPlayerID(playerID string) (*kingshot.Player, bool, 
 	}, true, nil
 }
 
-func (ps *PlayerStore) FindByUser(userID string) ([]*kingshot.Player, error) {
+func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingshot.Player, error) {
 	var players []*kingshot.Player
-	iter := ps.Client.Collection("players").Where("user_id", "==", userID).Documents(context.Background())
+	iter := ps.Client.Collection("players").Where("user_id", "==", userID).Documents(ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -111,7 +111,7 @@ func (ps *PlayerStore) FindByUser(userID string) ([]*kingshot.Player, error) {
 	return players, nil
 }
 
-func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
+func (ps *PlayerStore) AddPlayer(ctx context.Context, req kingshot.NewPlayerRequest) error {
 	internalPlayer := player{
 		PlayerID:     req.PlayerID,
 		UserID:       req.UserID,
@@ -126,17 +126,17 @@ func (ps *PlayerStore) AddPlayer(req kingshot.NewPlayerRequest) error {
 			},
 		},
 	}
-	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(context.Background(), internalPlayer)
+	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(ctx, internalPlayer)
 	return err
 }
 
-func (ps *PlayerStore) UpdatePlayerKingdom(req kingshot.TransferPlayerRequest) error {
+func (ps *PlayerStore) UpdatePlayerKingdom(ctx context.Context, req kingshot.TransferPlayerRequest) error {
 	entry := historyEntry{
 		GuildID:   req.GuildID,
 		Timestamp: time.Now(),
 		Action:    "transfer",
 	}
-	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Update(context.Background(), []firestore.Update{
+	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Update(ctx, []firestore.Update{
 		{Path: "kingdom_id", Value: req.NewKingdomID},
 		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})

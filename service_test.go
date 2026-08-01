@@ -448,6 +448,25 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		}
 	})
 
+	t.Run("blank owner also registers new player", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0"},
+		})
+		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
+		result := svc.TransferPlayer(t.Context(), req)
+		if !result.PlayerNotFound {
+			t.Fatalf("expected PlayerNotFound=true, got %+v", result)
+		}
+		if result.RegistrationResult == nil || !result.RegistrationResult.Success {
+			t.Fatalf("expected successful registration, got %+v", result.RegistrationResult)
+		}
+		p, found, _ := store.FindByPlayerID(t.Context(), "p1")
+		if !found || p.UserID != "u1" || p.KingdomID != "k1" {
+			t.Errorf("player not re-registered correctly: found=%v player=%+v", found, p)
+		}
+	})
+
 	t.Run("not your player", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
@@ -569,6 +588,25 @@ func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 	}
 	if p.UserID != "u2" {
 		t.Errorf("expected player to be re-linked to u2, got %q", p.UserID)
+	}
+}
+
+func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
+	store := newMapStore(map[string]*Player{
+		"p1": {PlayerID: "p1", UserID: "", KingdomID: "k1"},
+	})
+	svc := &GiftCodeService{store: store, client: &http.Client{}}
+	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2"}
+	result := svc.RegisterPlayer(t.Context(), req)
+	if !result.Success {
+		t.Fatalf("expected success, got %+v", result)
+	}
+	p, found, _ := store.FindByPlayerID(t.Context(), "p1")
+	if !found {
+		t.Fatal("expected player to exist in store")
+	}
+	if p.UserID != "u2" || p.KingdomID != "k2" {
+		t.Errorf("expected player to be reclaimed, got %+v", p)
 	}
 }
 

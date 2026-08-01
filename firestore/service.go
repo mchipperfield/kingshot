@@ -29,6 +29,7 @@ type player struct {
 
 type historyEntry struct {
 	GuildID   string    `firestore:"guild_id"`
+	UserID    string    `firestore:"user_id"`
 	Timestamp time.Time `firestore:"timestamp"`
 	Action    string    `firestore:"action"`
 }
@@ -125,6 +126,7 @@ func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingsh
 func (ps *PlayerStore) AddPlayer(ctx context.Context, req kingshot.NewPlayerRequest) error {
 	entry := historyEntry{
 		GuildID:   req.GuildID,
+		UserID:    req.UserID,
 		Timestamp: time.Now(),
 		Action:    "register",
 	}
@@ -140,12 +142,19 @@ func (ps *PlayerStore) AddPlayer(ctx context.Context, req kingshot.NewPlayerRequ
 		"is_active":     true,
 		"history":       firestore.ArrayUnion(entry),
 	}, firestore.MergeAll)
+	if err != nil {
+		return err
+	}
+	_, err = ps.Client.Collection("players").Doc(req.PlayerID).Update(ctx, []firestore.Update{
+		{Path: "history", Value: firestore.ArrayUnion(entry)},
+	})
 	return err
 }
 
 func (ps *PlayerStore) UpdatePlayerKingdom(ctx context.Context, req kingshot.TransferPlayerRequest) error {
 	entry := historyEntry{
 		GuildID:   req.GuildID,
+		UserID:    req.UserID,
 		Timestamp: time.Now(),
 		Action:    "transfer",
 	}
@@ -161,6 +170,7 @@ func (ps *PlayerStore) UpdatePlayerKingdom(ctx context.Context, req kingshot.Tra
 func (ps *PlayerStore) UnlinkPlayer(ctx context.Context, req kingshot.UnlinkPlayerRequest) error {
 	entry := historyEntry{
 		GuildID:   req.GuildID,
+		UserID:    req.UserID,
 		Timestamp: time.Now(),
 		Action:    "unlink",
 	}

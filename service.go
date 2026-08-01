@@ -120,9 +120,9 @@ func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerReque
 		slog.Error("failed to look up player for registration", "error", err)
 		return RegisterResult{StoreError: err}
 	}
-	// An unlinked player is treated as not found by the store, so this covers
-	// re-registering (and reactivating) a previously unlinked player too.
-	if found {
+	// Treat a blank owner as unowned so a previously unlinked player can be
+	// reclaimed even if the lookup surfaces the document.
+	if found && existing.UserID != "" {
 		if existing.UserID == req.UserID {
 			return RegisterResult{AlreadySelf: true}
 		}
@@ -188,7 +188,9 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 		return TransferPlayerResult{StoreError: err}
 	}
 
-	if !found {
+	// Treat a blank owner as unowned so a previously unlinked player can be
+	// reclaimed even if the lookup surfaces the document.
+	if !found || player.UserID == "" {
 		// Player doesn't exist, so let's register them instead.
 		registerReq := NewPlayerRequest{
 			PlayerID:  req.PlayerID,

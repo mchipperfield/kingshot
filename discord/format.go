@@ -115,6 +115,20 @@ func formatTransferResult(r kingshot.TransferPlayerResult) string {
 	return "An unknown error occurred during transfer."
 }
 
+func formatUnlinkResult(r kingshot.UnlinkPlayerResult) string {
+	switch {
+	case r.StoreError != nil:
+		return "Error unlinking player. Please try again later."
+	case r.PlayerNotFound:
+		return "Player not found."
+	case r.NotYourPlayer:
+		return "This player is not registered to your Discord account."
+	case r.Success:
+		return fmt.Sprintf("Player `%s` has been unlinked from your Discord account.", r.PlayerID)
+	}
+	return "An unknown error occurred while unlinking."
+}
+
 // chunkMessage splits s into slices of at most maxLen characters, breaking on
 // newline boundaries where possible.
 func chunkMessage(s string, maxLen int) []string {
@@ -139,6 +153,16 @@ func chunkMessage(s string, maxLen int) []string {
 // reply edits the deferred interaction response with the given message.
 func reply(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
 	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+	if err != nil {
+		slog.Error("failed to edit interaction response", "error", err)
+	}
+}
+
+// respondFinal edits the deferred interaction response with msg and strips
+// any components, so a confirmation prompt's buttons can't be reused.
+func respondFinal(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
+	components := []discordgo.MessageComponent{}
+	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg, Components: &components})
 	if err != nil {
 		slog.Error("failed to edit interaction response", "error", err)
 	}

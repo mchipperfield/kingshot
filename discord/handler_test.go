@@ -33,13 +33,17 @@ func TestGiftCodeCommands(t *testing.T) {
 }
 
 // TestInteractionHandler_IgnoresNonAppCommand verifies that the interaction
-// handler silently ignores non-ApplicationCommand interactions.
+// handler silently ignores message component interactions with an
+// unrecognised custom ID.
 func TestInteractionHandler_IgnoresNonAppCommand(t *testing.T) {
-	// svc is never dereferenced for non-ApplicationCommand interactions.
+	// svc is never dereferenced for an unrecognised custom ID.
 	h := InteractionHandler(nil)
 	h(nil, &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionMessageComponent,
+			Data: discordgo.MessageComponentInteractionData{
+				CustomID: "some-unrelated-component",
+			},
 		},
 	})
 }

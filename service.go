@@ -120,6 +120,8 @@ func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerReque
 		slog.Error("failed to look up player for registration", "error", err)
 		return RegisterResult{StoreError: err}
 	}
+	// An unlinked player is treated as not found by the store, so this covers
+	// re-registering (and reactivating) a previously unlinked player too.
 	if found {
 		if existing.UserID == req.UserID {
 			return RegisterResult{AlreadySelf: true}
@@ -239,6 +241,37 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 		UserID:       req.UserID,
 		Success:      true,
 	}
+}
+
+// UnlinkPlayer removes req.UserID's ownership of req.PlayerID and marks it
+// inactive so it is no longer redeemed for new codes. ctx bounds all store
+// calls made while processing req.
+func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) UnlinkPlayerResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	if err != nil {
+		slog.Error("failed to look up player for unlink", "error", err)
+		return UnlinkPlayerResult{StoreError: err}
+	}
+	// found is false both when the player was never registered and when it
+	// has already been unlinked, so both cases report the same result.
+	if !found {
+		return UnlinkPlayerResult{PlayerNotFound: true}
+	}
+	if existing.UserID != req.UserID {
+		return UnlinkPlayerResult{NotYourPlayer: true}
+	}
+
+	if err := s.store.UnlinkPlayer(ctx, req); err != nil {
+		slog.Error("failed to unlink player", "error", err)
+		return UnlinkPlayerResult{StoreError: err}
+	}
+
+	slog.Info("player unlinked", "player_id", req.PlayerID, "user_id", req.UserID)
+
+	return UnlinkPlayerResult{PlayerID: req.PlayerID, Success: true}
 }
 
 func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) ([]*Player, error) {

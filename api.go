@@ -153,3 +153,10 @@ type TransferPlayerRequest struct {
 	UserID       string
 	GuildID      string
 }
+
+// UnlinkPlayerRequest is the input to the UnlinkPlayer service method.
+type UnlinkPlayerRequest struct {
+	PlayerID string
+	UserID   string
+	GuildID  string
+}

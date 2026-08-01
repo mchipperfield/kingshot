@@ -74,6 +74,19 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 						},
 					},
 				},
+				{
+					Name:        "unlink",
+					Description: "Unlink a player ID from your Discord account",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "player-id",
+							Description: "The KingShot Player ID to unlink",
+							Required:    true,
+						},
+					},
+				},
 			},
 		},
 		{
@@ -91,27 +104,31 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 	}
 }
 
-// InteractionHandler returns a handler that dispatches /register and /code
-// interactions. Register this once at startup via session.AddHandler.
+// InteractionHandler returns a handler that dispatches /player and /code
+// commands, and the unlink confirmation button clicks they can trigger.
+// Register this once at startup via session.AddHandler.
 func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if i.Type != discordgo.InteractionApplicationCommand {
-			return
-		}
-
-		switch i.ApplicationCommandData().Name {
-		case "player":
-			subcommand := i.ApplicationCommandData().Options[0].Name
-			switch subcommand {
-			case "register":
-				handleRegisterPlayer(s, i, svc)
-			case "status":
-				handlePlayerStatus(s, i, svc)
-			case "transfer":
-				handleTransferPlayer(s, i, svc)
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			switch i.ApplicationCommandData().Name {
+			case "player":
+				subcommand := i.ApplicationCommandData().Options[0].Name
+				switch subcommand {
+				case "register":
+					handleRegisterPlayer(s, i, svc)
+				case "status":
+					handlePlayerStatus(s, i, svc)
+				case "transfer":
+					handleTransferPlayer(s, i, svc)
+				case "unlink":
+					handleUnlinkPlayer(s, i, svc)
+				}
+			case "code":
+				handleAddCode(s, i, svc)
 			}
-		case "code":
-			handleAddCode(s, i, svc)
+		case discordgo.InteractionMessageComponent:
+			handleUnlinkConfirmation(s, i, svc)
 		}
 	}
 }
@@ -242,4 +259,88 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 
 	result := svc.TransferPlayer(ctx, req)
 	reply(s, i, formatTransferResult(result))
+}
+
+// unlinkConfirmCustomID prefixes the confirm button's custom ID; the
+// playerID to unlink is appended after it.
+const unlinkConfirmCustomID = "player-unlink-confirm:"
+
+// unlinkCancelCustomID is the custom ID of the unlink flow's cancel button.
+const unlinkCancelCustomID = "player-unlink-cancel"
+
+func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	playerID := i.ApplicationCommandData().Options[0].Options[0].StringValue()
+
+	// Ephemeral: only the invoking user can see or click these buttons.
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf("Are you sure you want to unlink player `%s`? It will stop receiving gift codes until it is registered again.", playerID),
+			Flags:   discordgo.MessageFlagsEphemeral,
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label:    "Unlink",
+							Style:    discordgo.DangerButton,
+							CustomID: unlinkConfirmCustomID + playerID,
+						},
+						discordgo.Button{
+							Label:    "Cancel",
+							Style:    discordgo.SecondaryButton,
+							CustomID: unlinkCancelCustomID,
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		slog.Error("failed to respond with unlink confirmation", "error", err)
+	}
+}
+
+// handleUnlinkConfirmation handles clicks on the confirm/cancel buttons
+// produced by handleUnlinkPlayer.
+func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	customID := i.MessageComponentData().CustomID
+
+	if customID == unlinkCancelCustomID {
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseUpdateMessage,
+			Data: &discordgo.InteractionResponseData{
+				Content:    "Unlink cancelled.",
+				Components: []discordgo.MessageComponent{},
+			},
+		})
+		if err != nil {
+			slog.Error("failed to acknowledge unlink cancellation", "error", err)
+		}
+		return
+	}
+
+	playerID, ok := strings.CutPrefix(customID, unlinkConfirmCustomID)
+	if !ok {
+		return
+	}
+
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
+	})
+	if err != nil {
+		slog.Error("failed to defer interaction response for unlink confirmation", "error", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+
+	req := kingshot.UnlinkPlayerRequest{
+		PlayerID: playerID,
+		UserID:   i.Member.User.ID,
+		GuildID:  i.GuildID,
+	}
+
+	result := svc.UnlinkPlayer(ctx, req)
+	respondFinal(s, i, formatUnlinkResult(result))
 }

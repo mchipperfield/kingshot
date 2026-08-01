@@ -16,12 +16,15 @@ type PlayerStore struct {
 }
 
 type player struct {
-	PlayerID     string         `firestore:"player_id"`
-	UserID       string         `firestore:"user_id"`
-	KingdomID    string         `firestore:"kingdom_id"`
-	RegisteredAt time.Time      `firestore:"registered_at"`
-	GuildID      string         `firestore:"guild_id"`
-	History      []historyEntry `firestore:"history,omitempty"`
+	PlayerID     string    `firestore:"player_id"`
+	UserID       string    `firestore:"user_id"`
+	KingdomID    string    `firestore:"kingdom_id"`
+	RegisteredAt time.Time `firestore:"registered_at"`
+	GuildID      string    `firestore:"guild_id"`
+	// IsActive is cleared when a player is unlinked. Requires every document to
+	// have this field set (see AddPlayer/UnlinkPlayer) for the Players() query to see it.
+	IsActive bool           `firestore:"is_active"`
+	History  []historyEntry `firestore:"history,omitempty"`
 }
 
 type historyEntry struct {
@@ -42,7 +45,7 @@ func NewPlayerStore(projectId string) (*PlayerStore, error) {
 
 func (ps *PlayerStore) Players(ctx context.Context) ([]*kingshot.Player, error) {
 	var players []*kingshot.Player
-	iter := ps.Client.Collection("players").Documents(ctx)
+	iter := ps.Client.Collection("players").Where("is_active", "==", true).Documents(ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -78,6 +81,11 @@ func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*ki
 	if err := docSnap.DataTo(&p); err != nil {
 		return nil, false, err
 	}
+	// Get is by document ID, so it can't apply a Where filter; treat an
+	// unlinked player the same as one that was never registered.
+	if !p.IsActive {
+		return nil, false, nil
+	}
 
 	return &kingshot.Player{
 		PlayerID:  p.PlayerID,
@@ -88,7 +96,10 @@ func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*ki
 
 func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingshot.Player, error) {
 	var players []*kingshot.Player
-	iter := ps.Client.Collection("players").Where("user_id", "==", userID).Documents(ctx)
+	iter := ps.Client.Collection("players").
+		Where("user_id", "==", userID).
+		Where("is_active", "==", true).
+		Documents(ctx)
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
@@ -112,21 +123,23 @@ func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingsh
 }
 
 func (ps *PlayerStore) AddPlayer(ctx context.Context, req kingshot.NewPlayerRequest) error {
-	internalPlayer := player{
-		PlayerID:     req.PlayerID,
-		UserID:       req.UserID,
-		KingdomID:    req.KingdomID,
-		RegisteredAt: time.Now(),
-		GuildID:      req.GuildID,
-		History: []historyEntry{
-			{
-				GuildID:   req.GuildID,
-				Timestamp: time.Now(),
-				Action:    "register",
-			},
-		},
+	entry := historyEntry{
+		GuildID:   req.GuildID,
+		Timestamp: time.Now(),
+		Action:    "register",
 	}
-	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(ctx, internalPlayer)
+	// MergeAll upserts: creates the document for a brand new player, or
+	// reactivates and re-links a previously unlinked one while preserving its
+	// existing history via ArrayUnion.
+	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Set(ctx, map[string]any{
+		"player_id":     req.PlayerID,
+		"user_id":       req.UserID,
+		"kingdom_id":    req.KingdomID,
+		"guild_id":      req.GuildID,
+		"registered_at": time.Now(),
+		"is_active":     true,
+		"history":       firestore.ArrayUnion(entry),
+	}, firestore.MergeAll)
 	return err
 }
 
@@ -138,6 +151,22 @@ func (ps *PlayerStore) UpdatePlayerKingdom(ctx context.Context, req kingshot.Tra
 	}
 	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Update(ctx, []firestore.Update{
 		{Path: "kingdom_id", Value: req.NewKingdomID},
+		{Path: "history", Value: firestore.ArrayUnion(entry)},
+	})
+	return err
+}
+
+// UnlinkPlayer clears the player's owner and marks it inactive so it is
+// excluded from future code redemptions, while preserving its history.
+func (ps *PlayerStore) UnlinkPlayer(ctx context.Context, req kingshot.UnlinkPlayerRequest) error {
+	entry := historyEntry{
+		GuildID:   req.GuildID,
+		Timestamp: time.Now(),
+		Action:    "unlink",
+	}
+	_, err := ps.Client.Collection("players").Doc(req.PlayerID).Update(ctx, []firestore.Update{
+		{Path: "user_id", Value: ""},
+		{Path: "is_active", Value: false},
 		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})
 	return err

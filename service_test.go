@@ -17,8 +17,9 @@ import (
 
 // mapStore is an in-memory PlayerStore for testing.
 type mapStore struct {
-	mu      sync.Mutex
-	players map[string]*Player // playerID → Player
+	mu       sync.Mutex
+	players  map[string]*Player // playerID → Player
+	unlinked map[string]bool    // playerID → true once unlinked
 }
 
 func newMapStore(initial map[string]*Player) *mapStore {
@@ -28,14 +29,17 @@ func newMapStore(initial map[string]*Player) *mapStore {
 			players[k] = v
 		}
 	}
-	return &mapStore{players: players}
+	return &mapStore{players: players, unlinked: make(map[string]bool)}
 }
 
 func (m *mapStore) Players(ctx context.Context) ([]*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	players := make([]*Player, 0, len(m.players))
-	for _, p := range m.players {
+	for id, p := range m.players {
+		if m.unlinked[id] {
+			continue
+		}
 		players = append(players, p)
 	}
 	return players, nil
@@ -44,6 +48,9 @@ func (m *mapStore) Players(ctx context.Context) ([]*Player, error) {
 func (m *mapStore) FindByPlayerID(ctx context.Context, playerID string) (*Player, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.unlinked[playerID] {
+		return nil, false, nil
+	}
 	p, found := m.players[playerID]
 	return p, found, nil
 }
@@ -52,7 +59,10 @@ func (m *mapStore) FindByUser(ctx context.Context, userID string) ([]*Player, er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var userPlayers []*Player
-	for _, p := range m.players {
+	for id, p := range m.players {
+		if m.unlinked[id] {
+			continue
+		}
 		if p.UserID == userID {
 			userPlayers = append(userPlayers, p)
 		}
@@ -69,6 +79,7 @@ func (m *mapStore) AddPlayer(ctx context.Context, req NewPlayerRequest) error {
 		KingdomID: req.KingdomID,
 	}
 	m.players[player.PlayerID] = player
+	delete(m.unlinked, player.PlayerID)
 	return nil
 }
 
@@ -82,10 +93,21 @@ func (m *mapStore) UpdatePlayerKingdom(ctx context.Context, req TransferPlayerRe
 	return nil
 }
 
+func (m *mapStore) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.players[req.PlayerID]; ok {
+		p.UserID = ""
+		m.unlinked[req.PlayerID] = true
+		// The mock doesn't need to track history.
+	}
+	return nil
+}
+
 // errStore always returns err for every operation.
 type errStore struct{ err error }
 
-func (e *errStore) Players(context.Context) ([]*Player, error)  { return nil, e.err }
+func (e *errStore) Players(context.Context) ([]*Player, error) { return nil, e.err }
 func (e *errStore) FindByPlayerID(context.Context, string) (*Player, bool, error) {
 	return nil, false, e.err
 }
@@ -94,6 +116,7 @@ func (e *errStore) AddPlayer(context.Context, NewPlayerRequest) error     { retu
 func (e *errStore) UpdatePlayerKingdom(context.Context, TransferPlayerRequest) error {
 	return e.err
 }
+func (e *errStore) UnlinkPlayer(context.Context, UnlinkPlayerRequest) error { return e.err }
 
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.
@@ -464,6 +487,91 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		}
 	})
 }
+
+func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
+	t.Run("successful unlink", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.UnlinkPlayer(t.Context(), req)
+		if !result.Success {
+			t.Fatalf("expected success, got %+v", result)
+		}
+		_, found, _ := store.FindByPlayerID(t.Context(), "p1")
+		if found {
+			t.Fatal("expected unlinked player to no longer be found")
+		}
+	})
+
+	t.Run("player not found", func(t *testing.T) {
+		store := newMapStore(nil)
+		svc := &GiftCodeService{store: store}
+		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.UnlinkPlayer(t.Context(), req)
+		if !result.PlayerNotFound {
+			t.Errorf("expected PlayerNotFound=true, got %+v", result)
+		}
+	})
+
+	t.Run("not your player", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
+		})
+		svc := &GiftCodeService{store: store}
+		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.UnlinkPlayer(t.Context(), req)
+		if !result.NotYourPlayer {
+			t.Errorf("expected NotYourPlayer=true, got %+v", result)
+		}
+	})
+
+	t.Run("already unlinked reports player not found", func(t *testing.T) {
+		store := newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+		})
+		store.unlinked["p1"] = true
+		svc := &GiftCodeService{store: store}
+		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
+		result := svc.UnlinkPlayer(t.Context(), req)
+		if !result.PlayerNotFound {
+			t.Errorf("expected PlayerNotFound=true, got %+v", result)
+		}
+	})
+
+	t.Run("store error on lookup", func(t *testing.T) {
+		svc := &GiftCodeService{store: &errStore{errors.New("boom")}}
+		result := svc.UnlinkPlayer(t.Context(), UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"})
+		if result.StoreError == nil {
+			t.Errorf("expected StoreError, got %+v", result)
+		}
+	})
+}
+
+// TestGiftCodeService_RegisterPlayer_reactivatesUnlinked verifies that
+// registering a playerID that was previously unlinked succeeds instead of
+// returning AlreadyOther/AlreadySelf, allowing accounts to change hands.
+func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
+	store := newMapStore(map[string]*Player{
+		"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+	})
+	store.unlinked["p1"] = true
+	svc := &GiftCodeService{store: store, client: &http.Client{}}
+	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2"}
+	result := svc.RegisterPlayer(t.Context(), req)
+	if !result.Success {
+		t.Fatalf("expected success, got %+v", result)
+	}
+	p, found, _ := store.FindByPlayerID(t.Context(), "p1")
+	if !found {
+		t.Fatal("expected player to exist in store")
+	}
+	if p.UserID != "u2" {
+		t.Errorf("expected player to be re-linked to u2, got %q", p.UserID)
+	}
+}
+
 
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.

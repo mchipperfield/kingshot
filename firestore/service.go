@@ -63,6 +63,7 @@ func (ps *PlayerStore) Players(ctx context.Context) ([]*kingshot.Player, error) 
 			PlayerID:  p.PlayerID,
 			UserID:    p.UserID,
 			KingdomID: p.KingdomID,
+			GuildID:   p.GuildID,
 		})
 	}
 	return players, nil
@@ -92,6 +93,7 @@ func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*ki
 		PlayerID:  p.PlayerID,
 		UserID:    p.UserID,
 		KingdomID: p.KingdomID,
+		GuildID:   p.GuildID,
 	}, true, nil
 }
 
@@ -118,6 +120,7 @@ func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingsh
 			PlayerID:  p.PlayerID,
 			UserID:    p.UserID,
 			KingdomID: p.KingdomID,
+			GuildID:   p.GuildID,
 		})
 	}
 	return players, nil

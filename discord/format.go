@@ -54,6 +54,13 @@ func formatCodeResult(r kingshot.CodeResult) string {
 	return formatRedemptionReport(r.Code, len(r.PlayerResults), results)
 }
 
+func formatCodeDispatchResult(code string, guildCount int) string {
+	if guildCount == 0 {
+		return fmt.Sprintf("Code `%s` has been added, but there were no guilds to post results to.", code)
+	}
+	return fmt.Sprintf("Code `%s` has been added and posted to %d guild(s).", code, guildCount)
+}
+
 // formatRedemptionReport builds the final summary message after a code has been
 // added and redeemed for all players.
 func formatRedemptionReport(code string, playerCount int, results []string) string {

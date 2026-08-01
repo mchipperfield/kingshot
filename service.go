@@ -88,9 +88,10 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	slog.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
-	results = append(results, PlayerRedeemResult{PlayerID: firstPlayer.PlayerID, Message: outcome.msg})
+	results = append(results, PlayerRedeemResult{GuildID: firstPlayer.GuildID, PlayerID: firstPlayer.PlayerID, Message: outcome.msg})
 	for _, player := range players[1:] {
 		results = append(results, PlayerRedeemResult{
+			GuildID:  player.GuildID,
 			PlayerID: player.PlayerID,
 			Message:  s.redeemForPlayer(ctx, player, code),
 		})
@@ -162,6 +163,7 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 		PlayerID:  req.PlayerID,
 		UserID:    req.UserID,
 		KingdomID: req.KingdomID,
+		GuildID:   req.GuildID,
 	}
 
 	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)

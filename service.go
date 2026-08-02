@@ -36,6 +36,24 @@ func New(store PlayerStore, activeCodes ...string) *GiftCodeService {
 	}
 }
 
+// NewWithCodeStore returns a GiftCodeService that uses cs as its persistent
+// code store instead of the default in-memory store. Use this when a durable
+// CodeStore implementation (e.g. Firestore) is preferred over the in-memory
+// default.
+func NewWithCodeStore(store PlayerStore, cs CodeStore) *GiftCodeService {
+	return &GiftCodeService{
+		store:     store,
+		codeStore: cs,
+		redeemURL: defaultRedeemURL,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &transport{
+				limiter: rate.NewLimiter(rate.Every(2*time.Second), 1),
+			},
+		},
+	}
+}
+
 // ProcessNewCode validates code against the KingShot API and redeems it for
 // all registered players. It is safe to call concurrently. ctx bounds all
 // store and HTTP calls made while processing code.

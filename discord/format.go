@@ -15,19 +15,6 @@ const r4RoleId = "1432032487021875373"
 // discordMaxMessageLen is the safe character limit for a single Discord message.
 const discordMaxMessageLen = 1900
 
-// hasCodePermission returns true if the member is an administrator or has the r4 role.
-func hasCodePermission(member *discordgo.Member) bool {
-	if member.Permissions&discordgo.PermissionAdministrator == discordgo.PermissionAdministrator {
-		return true
-	}
-	for _, roleID := range member.Roles {
-		if roleID == r4RoleId {
-			return true
-		}
-	}
-	return false
-}
-
 // formatCodeResult formats a CodeResult as a Discord-ready message string.
 func formatCodeResult(r kingshot.CodeResult) string {
 	switch {

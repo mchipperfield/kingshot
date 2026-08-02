@@ -33,7 +33,7 @@ func (s *inMemoryCodeStore) Add(_ context.Context, code Code) {
 func (s *inMemoryCodeStore) ActiveCodes(_ context.Context) []string {
 	codes := make([]string, 0, len(s.codes))
 	for _, c := range s.codes {
-		if c.IsActive() {
+		if !c.IsExpired() {
 			codes = append(codes, c.Value)
 		}
 	}

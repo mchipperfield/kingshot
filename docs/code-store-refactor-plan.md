@@ -22,14 +22,19 @@ GiftCodeService
                                └── <future: FirestoreCodeStore / SQLiteCodeStore>
 ```
 
-### `CodeStore` interface (summary)
+### `Code` struct and `CodeStore` interface (summary)
 
 ```go
+type Code struct {
+    Value     string
+    ExpiredAt time.Time // zero value means the code is still active
+}
+
+func (c Code) IsExpired() bool { return !c.ExpiredAt.IsZero() }
+
 type CodeStore interface {
-    IsActive(ctx context.Context, code string) bool
-    IsExpired(ctx context.Context, code string) bool
-    AddActive(ctx context.Context, code string)
-    AddExpired(ctx context.Context, code string)
+    Find(ctx context.Context, code string) (Code, bool)
+    Add(ctx context.Context, code Code)
     ActiveCodes(ctx context.Context) []string
     RemoveActive(ctx context.Context, codes ...string)
 }

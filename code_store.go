@@ -1,18 +1,18 @@
 package kingshot
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Code represents a tracked gift code and its current state.
 type Code struct {
-	Value   string
-	Expired bool
+	Value     string
+	ExpiredAt time.Time // zero value means the code is still active
 }
 
-// IsActive reports whether the code is in the active (not expired) state.
-func (c Code) IsActive() bool { return !c.Expired }
-
 // IsExpired reports whether the code is known to be expired.
-func (c Code) IsExpired() bool { return c.Expired }
+func (c Code) IsExpired() bool { return !c.ExpiredAt.IsZero() }
 
 // CodeStore manages the lifecycle of gift codes tracked by GiftCodeService.
 // Implementations must be safe to call from a single goroutine at a time;

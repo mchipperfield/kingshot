@@ -44,7 +44,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	defer s.mu.Unlock()
 
 	if c, found := s.codeStore.Find(ctx, code); found {
-		if c.IsActive() {
+		if !c.IsExpired() {
 			return CodeResult{Code: code, AlreadyActive: true}
 		}
 		return CodeResult{Code: code, AlreadyExpired: true}
@@ -72,7 +72,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 
 	outcome := interpretRedeemResult(redeemResp.ErrCode)
 	if outcome.codeExpired {
-		s.codeStore.Add(ctx, Code{Value: code, Expired: true})
+		s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()})
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 	if outcome.codeInvalid {

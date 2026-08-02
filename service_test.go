@@ -337,7 +337,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 
 	t.Run("already expired", func(t *testing.T) {
 		cs := newInMemoryCodeStore()
-		cs.AddExpired(t.Context(), "EXPIREDCODE")
+		cs.Add(t.Context(), Code{Value: "EXPIREDCODE", Expired: true})
 		svc := &GiftCodeService{codeStore: cs, store: newMapStore(nil)}
 		result := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
 		if !result.AlreadyExpired {
@@ -362,7 +362,8 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		if len(result.PlayerResults) != 0 {
 			t.Errorf("expected empty PlayerResults, got %v", result.PlayerResults)
 		}
-		if !svc.codeStore.IsActive(t.Context(), "FRESHCODE") {
+		c, found := svc.codeStore.Find(t.Context(), "FRESHCODE")
+		if !found || !c.IsActive() {
 			t.Error("expected FRESHCODE to be in active codes")
 		}
 	})
@@ -632,32 +633,35 @@ func TestGiftCodeService_concurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-// TestGiftCodeService_isCodeKnown verifies active and expired membership
-// detection without touching any I/O.
-func TestGiftCodeService_isCodeKnown(t *testing.T) {
-	svc := &GiftCodeService{
-		codeStore: newInMemoryCodeStore("ACTIVE1", "ACTIVE2"),
-		store:     newMapStore(nil),
-	}
-	svc.codeStore.AddExpired(t.Context(), "EXPIRED1")
+// TestGiftCodeService_codeStoreLookup verifies active and expired membership
+// detection via the CodeStore interface.
+func TestGiftCodeService_codeStoreLookup(t *testing.T) {
+	cs := newInMemoryCodeStore("ACTIVE1", "ACTIVE2")
+	cs.Add(t.Context(), Code{Value: "EXPIRED1", Expired: true})
 	tests := []struct {
 		code        string
+		wantFound   bool
 		wantActive  bool
 		wantExpired bool
 	}{
-		{"ACTIVE1", true, false},
-		{"ACTIVE2", true, false},
-		{"EXPIRED1", false, true},
-		{"UNKNOWN", false, false},
+		{"ACTIVE1", true, true, false},
+		{"ACTIVE2", true, true, false},
+		{"EXPIRED1", true, false, true},
+		{"UNKNOWN", false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.code, func(t *testing.T) {
-			active, expired := svc.isCodeKnown(t.Context(), tt.code)
-			if active != tt.wantActive {
-				t.Errorf("active = %v, want %v", active, tt.wantActive)
+			c, found := cs.Find(t.Context(), tt.code)
+			if found != tt.wantFound {
+				t.Errorf("found = %v, want %v", found, tt.wantFound)
 			}
-			if expired != tt.wantExpired {
-				t.Errorf("expired = %v, want %v", expired, tt.wantExpired)
+			if found {
+				if c.IsActive() != tt.wantActive {
+					t.Errorf("IsActive = %v, want %v", c.IsActive(), tt.wantActive)
+				}
+				if c.IsExpired() != tt.wantExpired {
+					t.Errorf("IsExpired = %v, want %v", c.IsExpired(), tt.wantExpired)
+				}
 			}
 		})
 	}
@@ -715,27 +719,32 @@ func TestInMemoryCodeStore_AddAndCheck(t *testing.T) {
 	ctx := t.Context()
 	s := newInMemoryCodeStore()
 
-	if s.IsActive(ctx, "CODE1") {
-		t.Error("expected CODE1 to be inactive initially")
-	}
-	if s.IsExpired(ctx, "CODE1") {
-		t.Error("expected CODE1 to be non-expired initially")
+	if _, found := s.Find(ctx, "CODE1"); found {
+		t.Error("expected CODE1 to be unknown initially")
 	}
 
-	s.AddActive(ctx, "CODE1")
-	if !s.IsActive(ctx, "CODE1") {
-		t.Error("expected CODE1 to be active after AddActive")
+	s.Add(ctx, Code{Value: "CODE1"})
+	c, found := s.Find(ctx, "CODE1")
+	if !found {
+		t.Fatal("expected CODE1 to be found after Add")
 	}
-	if s.IsExpired(ctx, "CODE1") {
-		t.Error("expected CODE1 to not be expired after AddActive")
+	if !c.IsActive() {
+		t.Error("expected CODE1 to be active after Add")
+	}
+	if c.IsExpired() {
+		t.Error("expected CODE1 to not be expired after Add")
 	}
 
-	s.AddExpired(ctx, "CODE2")
-	if s.IsActive(ctx, "CODE2") {
-		t.Error("expected CODE2 to be inactive after AddExpired")
+	s.Add(ctx, Code{Value: "CODE2", Expired: true})
+	c2, found := s.Find(ctx, "CODE2")
+	if !found {
+		t.Fatal("expected CODE2 to be found after Add")
 	}
-	if !s.IsExpired(ctx, "CODE2") {
-		t.Error("expected CODE2 to be expired after AddExpired")
+	if c2.IsActive() {
+		t.Error("expected CODE2 to be inactive after Add with Expired:true")
+	}
+	if !c2.IsExpired() {
+		t.Error("expected CODE2 to be expired after Add with Expired:true")
 	}
 }
 
@@ -744,12 +753,13 @@ func TestInMemoryCodeStore_Seed(t *testing.T) {
 	ctx := t.Context()
 	s := newInMemoryCodeStore("A", "B", "C")
 	for _, code := range []string{"A", "B", "C"} {
-		if !s.IsActive(ctx, code) {
+		c, found := s.Find(ctx, code)
+		if !found || !c.IsActive() {
 			t.Errorf("expected seeded code %q to be active", code)
 		}
 	}
-	if s.IsActive(ctx, "D") {
-		t.Error("expected unseeded code D to be inactive")
+	if _, found := s.Find(ctx, "D"); found {
+		t.Error("expected unseeded code D to be unknown")
 	}
 }
 
@@ -758,8 +768,8 @@ func TestInMemoryCodeStore_Seed(t *testing.T) {
 func TestInMemoryCodeStore_DuplicateAddIsNoOp(t *testing.T) {
 	ctx := t.Context()
 	s := newInMemoryCodeStore()
-	s.AddActive(ctx, "DUP")
-	s.AddActive(ctx, "DUP")
+	s.Add(ctx, Code{Value: "DUP"})
+	s.Add(ctx, Code{Value: "DUP"})
 	codes := s.ActiveCodes(ctx)
 	count := 0
 	for _, c := range codes {
@@ -771,10 +781,11 @@ func TestInMemoryCodeStore_DuplicateAddIsNoOp(t *testing.T) {
 		t.Errorf("expected DUP to appear exactly once in ActiveCodes, got %d", count)
 	}
 
-	s.AddExpired(ctx, "EXP")
-	s.AddExpired(ctx, "EXP")
-	if !s.IsExpired(ctx, "EXP") {
-		t.Error("expected EXP to be expired after duplicate AddExpired")
+	s.Add(ctx, Code{Value: "EXP", Expired: true})
+	s.Add(ctx, Code{Value: "EXP", Expired: true})
+	c, found := s.Find(ctx, "EXP")
+	if !found || !c.IsExpired() {
+		t.Error("expected EXP to be expired after duplicate Add with Expired:true")
 	}
 }
 
@@ -785,13 +796,13 @@ func TestInMemoryCodeStore_RemoveActive(t *testing.T) {
 	s := newInMemoryCodeStore("A", "B", "C")
 
 	s.RemoveActive(ctx, "A", "C", "NOTPRESENT")
-	if s.IsActive(ctx, "A") {
+	if _, found := s.Find(ctx, "A"); found {
 		t.Error("expected A to be removed")
 	}
-	if s.IsActive(ctx, "C") {
+	if _, found := s.Find(ctx, "C"); found {
 		t.Error("expected C to be removed")
 	}
-	if !s.IsActive(ctx, "B") {
+	if b, found := s.Find(ctx, "B"); !found || !b.IsActive() {
 		t.Error("expected B to remain active")
 	}
 	codes := s.ActiveCodes(ctx)

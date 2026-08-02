@@ -43,9 +43,10 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.codeStore.IsActive(ctx, code) {
-		return CodeResult{Code: code, AlreadyActive: true}
-	} else if s.codeStore.IsExpired(ctx, code) {
+	if c, found := s.codeStore.Find(ctx, code); found {
+		if c.IsActive() {
+			return CodeResult{Code: code, AlreadyActive: true}
+		}
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 
@@ -55,7 +56,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	}
 
 	if len(players) == 0 {
-		s.codeStore.AddActive(ctx, code)
+		s.codeStore.Add(ctx, Code{Value: code})
 		slog.Info("code added with no registered players", "code", code)
 		return CodeResult{Code: code, Added: true}
 	}
@@ -71,7 +72,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 
 	outcome := interpretRedeemResult(redeemResp.ErrCode)
 	if outcome.codeExpired {
-		s.codeStore.AddExpired(ctx, code)
+		s.codeStore.Add(ctx, Code{Value: code, Expired: true})
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 	if outcome.codeInvalid {
@@ -82,7 +83,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 		return CodeResult{Code: code, InvalidPlayer: true}
 	}
 
-	s.codeStore.AddActive(ctx, code)
+	s.codeStore.Add(ctx, Code{Value: code})
 	slog.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
@@ -280,11 +281,6 @@ func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.store.FindByUser(ctx, userID)
-}
-
-// isCodeKnown reports whether code is already tracked. Caller must hold s.mu.
-func (s *GiftCodeService) isCodeKnown(ctx context.Context, code string) (active, expired bool) {
-	return s.codeStore.IsActive(ctx, code), s.codeStore.IsExpired(ctx, code)
 }
 
 // redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.

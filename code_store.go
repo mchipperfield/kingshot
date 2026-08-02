@@ -2,20 +2,28 @@ package kingshot
 
 import "context"
 
+// Code represents a tracked gift code and its current state.
+type Code struct {
+	Value   string
+	Expired bool
+}
+
+// IsActive reports whether the code is in the active (not expired) state.
+func (c Code) IsActive() bool { return !c.Expired }
+
+// IsExpired reports whether the code is known to be expired.
+func (c Code) IsExpired() bool { return c.Expired }
+
 // CodeStore manages the lifecycle of gift codes tracked by GiftCodeService.
 // Implementations must be safe to call from a single goroutine at a time;
 // GiftCodeService serialises all access through its own mutex.
 type CodeStore interface {
-	// IsActive reports whether code is currently active.
-	IsActive(ctx context.Context, code string) bool
-	// IsExpired reports whether code is known to be expired.
-	IsExpired(ctx context.Context, code string) bool
-	// AddActive records code as active. Adding a code that is already active
-	// is a no-op.
-	AddActive(ctx context.Context, code string)
-	// AddExpired records code as expired. Adding a code that is already
-	// expired is a no-op.
-	AddExpired(ctx context.Context, code string)
+	// Find looks up a code by value. found is false when the code is not
+	// tracked at all.
+	Find(ctx context.Context, code string) (Code, bool)
+	// Add stores a code. If a code with the same Value already exists its
+	// state is updated.
+	Add(ctx context.Context, code Code)
 	// ActiveCodes returns a snapshot of all currently active codes.
 	ActiveCodes(ctx context.Context) []string
 	// RemoveActive removes the named codes from the active set. Codes that are

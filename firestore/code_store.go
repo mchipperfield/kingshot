@@ -98,14 +98,18 @@ func (cs *CodeStore) ActiveCodes(ctx context.Context) []string {
 	return codes
 }
 
-// RemoveActive deletes the named codes from Firestore entirely. Codes that are
-// not present are silently ignored. After removal, Find will return found=false
-// for those codes, matching the in-memory semantics.
+// RemoveActive marks the named codes as inactive (is_active=false) with an
+// expired_at timestamp so that subsequent Find calls correctly identify them
+// as expired. Codes that are not present are silently ignored.
 func (cs *CodeStore) RemoveActive(ctx context.Context, codes ...string) {
+	now := time.Now()
 	for _, code := range codes {
-		_, err := cs.collection().Doc(code).Delete(ctx)
+		_, err := cs.collection().Doc(code).Set(ctx, map[string]any{
+			"is_active":  false,
+			"expired_at": now,
+		}, firestore.MergeAll)
 		if err != nil {
-			slog.Error("CodeStore.RemoveActive: failed to delete code", "code", code, "error", err)
+			slog.Error("CodeStore.RemoveActive: failed to mark code inactive", "code", code, "error", err)
 		}
 	}
 }

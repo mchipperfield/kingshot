@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"slices"
 	"sync"
 	"time"
 
@@ -14,21 +13,20 @@ import (
 // GiftCodeService manages gift code state and interacts with the KingShot API.
 // All mutable state is owned here; no package-level globals.
 type GiftCodeService struct {
-	mu           sync.Mutex
-	activeCodes  []string
-	expiredCodes []string
-	store        PlayerStore
-	client       *http.Client
-	redeemURL    string
+	mu        sync.Mutex
+	codeStore CodeStore
+	store     PlayerStore
+	client    *http.Client
+	redeemURL string
 }
 
 // New returns a GiftCodeService ready for use. Any activeCodes provided are
 // pre-loaded as already-active codes.
 func New(store PlayerStore, activeCodes ...string) *GiftCodeService {
 	return &GiftCodeService{
-		store:       store,
-		activeCodes: activeCodes,
-		redeemURL:   defaultRedeemURL,
+		store:     store,
+		codeStore: newInMemoryCodeStore(activeCodes...),
+		redeemURL: defaultRedeemURL,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &transport{
@@ -45,9 +43,10 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if active, expired := s.isCodeKnown(code); active {
-		return CodeResult{Code: code, AlreadyActive: true}
-	} else if expired {
+	if c, found := s.codeStore.Find(ctx, code); found {
+		if !c.IsExpired() {
+			return CodeResult{Code: code, AlreadyActive: true}
+		}
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 
@@ -57,7 +56,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	}
 
 	if len(players) == 0 {
-		s.activeCodes = append(s.activeCodes, code)
+		s.codeStore.Add(ctx, Code{Value: code})
 		slog.Info("code added with no registered players", "code", code)
 		return CodeResult{Code: code, Added: true}
 	}
@@ -73,7 +72,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 
 	outcome := interpretRedeemResult(redeemResp.ErrCode)
 	if outcome.codeExpired {
-		s.expiredCodes = append(s.expiredCodes, code)
+		s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()})
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 	if outcome.codeInvalid {
@@ -84,7 +83,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 		return CodeResult{Code: code, InvalidPlayer: true}
 	}
 
-	s.activeCodes = append(s.activeCodes, code)
+	s.codeStore.Add(ctx, Code{Value: code})
 	slog.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
@@ -284,11 +283,6 @@ func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) (
 	return s.store.FindByUser(ctx, userID)
 }
 
-// isCodeKnown reports whether code is already tracked. Caller must hold s.mu.
-func (s *GiftCodeService) isCodeKnown(code string) (active, expired bool) {
-	return slices.Contains(s.activeCodes, code), slices.Contains(s.expiredCodes, code)
-}
-
 // redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.
 func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, code string) string {
 	resp, err := s.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
@@ -303,14 +297,15 @@ func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, c
 // redeemActiveCodes redeems all currently active codes for playerID and returns
 // a slice of per-code results. Caller must hold s.mu.
 func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) []ActiveCodeResult {
-	if len(s.activeCodes) == 0 {
+	active := s.codeStore.ActiveCodes(ctx)
+	if len(active) == 0 {
 		return nil
 	}
 
 	var results []ActiveCodeResult
 	var codesToRemove []string
 
-	for _, code := range s.activeCodes {
+	for _, code := range active {
 		redeemResp, err := s.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
 		if err != nil {
 			slog.Error("failed to redeem gift code after registration", "error", err, "code", code, "player_id", player.PlayerID)
@@ -327,9 +322,7 @@ func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player)
 	}
 
 	if len(codesToRemove) > 0 {
-		s.activeCodes = slices.DeleteFunc(s.activeCodes, func(c string) bool {
-			return slices.Contains(codesToRemove, c)
-		})
+		s.codeStore.RemoveActive(ctx, codesToRemove...)
 	}
 
 	return results

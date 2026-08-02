@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 // --- Test helpers ------------------------------------------------------------
@@ -135,6 +135,7 @@ func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 	}))
 	t.Cleanup(srv.Close)
 	return &GiftCodeService{
+		codeStore: newInMemoryCodeStore(),
 		redeemURL: srv.URL + "/gift_code",
 		client:    srv.Client(),
 		store:     newMapStore(nil),
@@ -328,7 +329,7 @@ func TestInterpretRedeemResult(t *testing.T) {
 // no network calls.
 func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	t.Run("already active", func(t *testing.T) {
-		svc := &GiftCodeService{activeCodes: []string{"EXISTINGCODE"}, store: newMapStore(nil)}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore("EXISTINGCODE"), store: newMapStore(nil)}
 		result := svc.ProcessNewCode(t.Context(), "EXISTINGCODE")
 		if !result.AlreadyActive {
 			t.Errorf("expected AlreadyActive=true, got %+v", result)
@@ -336,7 +337,9 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	})
 
 	t.Run("already expired", func(t *testing.T) {
-		svc := &GiftCodeService{expiredCodes: []string{"EXPIREDCODE"}, store: newMapStore(nil)}
+		cs := newInMemoryCodeStore()
+		cs.Add(t.Context(), Code{Value: "EXPIREDCODE", ExpiredAt: time.Now()})
+		svc := &GiftCodeService{codeStore: cs, store: newMapStore(nil)}
 		result := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
 		if !result.AlreadyExpired {
 			t.Errorf("expected AlreadyExpired=true, got %+v", result)
@@ -344,7 +347,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	})
 
 	t.Run("store error", func(t *testing.T) {
-		svc := &GiftCodeService{store: &errStore{errors.New("store error")}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("store error")}}
 		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
 		if result.StoreError == nil {
 			t.Error("expected StoreError to be set")
@@ -352,7 +355,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	})
 
 	t.Run("no registered players adds code to active list", func(t *testing.T) {
-		svc := &GiftCodeService{store: newMapStore(nil)}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: newMapStore(nil)}
 		result := svc.ProcessNewCode(t.Context(), "FRESHCODE")
 		if !result.Added {
 			t.Errorf("expected Added=true, got %+v", result)
@@ -360,8 +363,9 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		if len(result.PlayerResults) != 0 {
 			t.Errorf("expected empty PlayerResults, got %v", result.PlayerResults)
 		}
-		if !slices.Contains(svc.activeCodes, "FRESHCODE") {
-			t.Error("expected FRESHCODE to be in activeCodes")
+		c, found := svc.codeStore.Find(t.Context(), "FRESHCODE")
+		if !found || c.IsExpired() {
+			t.Error("expected FRESHCODE to be in active codes")
 		}
 	})
 }
@@ -370,7 +374,7 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 	t.Run("new player", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"}
 		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.Success {
@@ -383,7 +387,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 
 	t.Run("player already registered to self", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u1"}})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.AlreadySelf {
@@ -393,7 +397,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 
 	t.Run("player already registered to other", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u2"}})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.AlreadyOther {
@@ -406,7 +410,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := NewPlayerRequest{PlayerID: "p3", UserID: "u1", KingdomID: "k1"}
 		result := svc.RegisterPlayer(t.Context(), req)
 		if !result.MaxPlayersForKingdomReached {
@@ -420,7 +424,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "g1"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2", GuildID: "g2"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.Success {
@@ -433,7 +437,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 
 	t.Run("player not found, registers new player", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
@@ -454,7 +458,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0", GuildID: "g0"},
 		})
-		svc := &GiftCodeService{store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
@@ -473,7 +477,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.NotYourPlayer {
@@ -487,7 +491,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k2"},
 			"p3": {PlayerID: "p3", UserID: "u1", KingdomID: "k2"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.MaxPlayersForNewKingdomReached {
@@ -500,7 +504,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
 		result := svc.TransferPlayer(t.Context(), req)
 		if !result.AlreadyInKingdom {
@@ -514,7 +518,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		result := svc.UnlinkPlayer(t.Context(), req)
 		if !result.Success {
@@ -528,7 +532,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 
 	t.Run("player not found", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		result := svc.UnlinkPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
@@ -540,7 +544,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		result := svc.UnlinkPlayer(t.Context(), req)
 		if !result.NotYourPlayer {
@@ -553,7 +557,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 		})
 		store.unlinked["p1"] = true
-		svc := &GiftCodeService{store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		result := svc.UnlinkPlayer(t.Context(), req)
 		if !result.PlayerNotFound {
@@ -562,7 +566,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 	})
 
 	t.Run("store error on lookup", func(t *testing.T) {
-		svc := &GiftCodeService{store: &errStore{errors.New("boom")}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("boom")}}
 		result := svc.UnlinkPlayer(t.Context(), UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"})
 		if result.StoreError == nil {
 			t.Errorf("expected StoreError, got %+v", result)
@@ -578,7 +582,7 @@ func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 		"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "old-guild"},
 	})
 	store.unlinked["p1"] = true
-	svc := &GiftCodeService{store: store, client: &http.Client{}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
 	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
 	result := svc.RegisterPlayer(t.Context(), req)
 	if !result.Success {
@@ -600,7 +604,7 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 	store := newMapStore(map[string]*Player{
 		"p1": {PlayerID: "p1", UserID: "", KingdomID: "k1", GuildID: "old-guild"},
 	})
-	svc := &GiftCodeService{store: store, client: &http.Client{}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
 	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
 	result := svc.RegisterPlayer(t.Context(), req)
 	if !result.Success {
@@ -618,7 +622,7 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.
 func TestGiftCodeService_concurrentAccess(t *testing.T) {
-	svc := &GiftCodeService{store: &errStore{errors.New("no store")}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("no store")}}
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Add(1)
@@ -630,32 +634,35 @@ func TestGiftCodeService_concurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-// TestGiftCodeService_isCodeKnown verifies active and expired membership
-// detection without touching any I/O.
-func TestGiftCodeService_isCodeKnown(t *testing.T) {
-	svc := &GiftCodeService{
-		activeCodes:  []string{"ACTIVE1", "ACTIVE2"},
-		expiredCodes: []string{"EXPIRED1"},
-		store:        newMapStore(nil),
-	}
+// TestGiftCodeService_codeStoreLookup verifies active and expired membership
+// detection via the CodeStore interface.
+func TestGiftCodeService_codeStoreLookup(t *testing.T) {
+	cs := newInMemoryCodeStore("ACTIVE1", "ACTIVE2")
+	cs.Add(t.Context(), Code{Value: "EXPIRED1", ExpiredAt: time.Now()})
 	tests := []struct {
 		code        string
+		wantFound   bool
 		wantActive  bool
 		wantExpired bool
 	}{
-		{"ACTIVE1", true, false},
-		{"ACTIVE2", true, false},
-		{"EXPIRED1", false, true},
-		{"UNKNOWN", false, false},
+		{"ACTIVE1", true, true, false},
+		{"ACTIVE2", true, true, false},
+		{"EXPIRED1", true, false, true},
+		{"UNKNOWN", false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.code, func(t *testing.T) {
-			active, expired := svc.isCodeKnown(tt.code)
-			if active != tt.wantActive {
-				t.Errorf("active = %v, want %v", active, tt.wantActive)
+			c, found := cs.Find(t.Context(), tt.code)
+			if found != tt.wantFound {
+				t.Errorf("found = %v, want %v", found, tt.wantFound)
 			}
-			if expired != tt.wantExpired {
-				t.Errorf("expired = %v, want %v", expired, tt.wantExpired)
+			if found {
+				if !c.IsExpired() != tt.wantActive {
+					t.Errorf("IsActive = %v, want %v", !c.IsExpired(), tt.wantActive)
+				}
+				if c.IsExpired() != tt.wantExpired {
+					t.Errorf("IsExpired = %v, want %v", c.IsExpired(), tt.wantExpired)
+				}
 			}
 		})
 	}
@@ -693,6 +700,7 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 		svc := &GiftCodeService{
+			codeStore: newInMemoryCodeStore(),
 			redeemURL: srv.URL + "/gift_code",
 			client:    srv.Client(),
 			store:     newMapStore(nil),
@@ -703,6 +711,112 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 			t.Errorf("got %q, want %q", got, "Error redeeming code.")
 		}
 	})
+}
+
+// --- inMemoryCodeStore tests -------------------------------------------------
+
+// TestInMemoryCodeStore_AddAndCheck verifies basic add + membership semantics.
+func TestInMemoryCodeStore_AddAndCheck(t *testing.T) {
+	ctx := t.Context()
+	s := newInMemoryCodeStore()
+
+	if _, found := s.Find(ctx, "CODE1"); found {
+		t.Error("expected CODE1 to be unknown initially")
+	}
+
+	s.Add(ctx, Code{Value: "CODE1"})
+	c, found := s.Find(ctx, "CODE1")
+	if !found {
+		t.Fatal("expected CODE1 to be found after Add")
+	}
+	if c.IsExpired() {
+		t.Error("expected CODE1 to be active after Add")
+	}
+	if c.IsExpired() {
+		t.Error("expected CODE1 to not be expired after Add")
+	}
+
+	s.Add(ctx, Code{Value: "CODE2", ExpiredAt: time.Now()})
+	c2, found := s.Find(ctx, "CODE2")
+	if !found {
+		t.Fatal("expected CODE2 to be found after Add")
+	}
+	if !c2.IsExpired() {
+		t.Error("expected CODE2 to be expired after Add with ExpiredAt set")
+	}
+}
+
+// TestInMemoryCodeStore_Seed verifies that constructor seeds active codes.
+func TestInMemoryCodeStore_Seed(t *testing.T) {
+	ctx := t.Context()
+	s := newInMemoryCodeStore("A", "B", "C")
+	for _, code := range []string{"A", "B", "C"} {
+		c, found := s.Find(ctx, code)
+		if !found || c.IsExpired() {
+			t.Errorf("expected seeded code %q to be active", code)
+		}
+	}
+	if _, found := s.Find(ctx, "D"); found {
+		t.Error("expected unseeded code D to be unknown")
+	}
+}
+
+// TestInMemoryCodeStore_DuplicateAddIsNoOp verifies that adding the same code
+// twice does not grow the active set unboundedly.
+func TestInMemoryCodeStore_DuplicateAddIsNoOp(t *testing.T) {
+	ctx := t.Context()
+	s := newInMemoryCodeStore()
+	s.Add(ctx, Code{Value: "DUP"})
+	s.Add(ctx, Code{Value: "DUP"})
+	codes := s.ActiveCodes(ctx)
+	count := 0
+	for _, c := range codes {
+		if c == "DUP" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected DUP to appear exactly once in ActiveCodes, got %d", count)
+	}
+
+	s.Add(ctx, Code{Value: "EXP", ExpiredAt: time.Now()})
+	s.Add(ctx, Code{Value: "EXP", ExpiredAt: time.Now()})
+	c, found := s.Find(ctx, "EXP")
+	if !found || !c.IsExpired() {
+		t.Error("expected EXP to be expired after duplicate Add with ExpiredAt set")
+	}
+}
+
+// TestInMemoryCodeStore_RemoveActive verifies that RemoveActive removes codes
+// from the active set and ignores unknown ones.
+func TestInMemoryCodeStore_RemoveActive(t *testing.T) {
+	ctx := t.Context()
+	s := newInMemoryCodeStore("A", "B", "C")
+
+	s.RemoveActive(ctx, "A", "C", "NOTPRESENT")
+	if _, found := s.Find(ctx, "A"); found {
+		t.Error("expected A to be removed")
+	}
+	if _, found := s.Find(ctx, "C"); found {
+		t.Error("expected C to be removed")
+	}
+	if b, found := s.Find(ctx, "B"); !found || b.IsExpired() {
+		t.Error("expected B to remain active")
+	}
+	codes := s.ActiveCodes(ctx)
+	if len(codes) != 1 || codes[0] != "B" {
+		t.Errorf("expected ActiveCodes=[B], got %v", codes)
+	}
+}
+
+// TestInMemoryCodeStore_ActiveCodesEmpty verifies that ActiveCodes returns nil
+// or an empty slice when no codes are active.
+func TestInMemoryCodeStore_ActiveCodesEmpty(t *testing.T) {
+	ctx := t.Context()
+	s := newInMemoryCodeStore()
+	if len(s.ActiveCodes(ctx)) != 0 {
+		t.Errorf("expected empty ActiveCodes, got %v", s.ActiveCodes(ctx))
+	}
 }
 
 // --- Helpers -----------------------------------------------------------------

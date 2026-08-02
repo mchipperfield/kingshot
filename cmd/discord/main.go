@@ -52,7 +52,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := kingshot.New(store, []string{"Kingshot888", "VIP777"}...)
+	codeStore := firestore.NewCodeStore(store.Client)
+	svc := kingshot.NewWithCodeStore(store, codeStore)
 	discord.Register(session, svc)
 
 	commands := discord.GiftCodeCommands()

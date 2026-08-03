@@ -58,3 +58,11 @@ type CodeStore interface {
 	// not present are silently ignored.
 	RemoveActive(ctx context.Context, codes ...string)
 }
+
+type AllianceStore interface {
+	SetRedemptionChannel(ctx context.Context, req struct {
+		GuildId   string
+		UserId    string
+		ChannelId string
+	}) error
+}

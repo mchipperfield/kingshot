@@ -57,7 +57,7 @@ func main() {
 	codeStore := firestore.NewCodeStore(client)
 	svc := kingshot.NewWithCodeStore(playerStore, codeStore)
 
-	discord.Register(session, svc)
+	discord.Register(session, svc, kingshot.NewAllianceStore())
 
 	commands := discord.GiftCodeCommands()
 	commandNames := commandNameSet(commands)

@@ -45,3 +45,18 @@ func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) {
 		delete(s.codes, v)
 	}
 }
+
+type inMemoryAllianceStore struct {
+}
+
+func (s *inMemoryAllianceStore) SetRedemptionChannel(ctx context.Context, req struct {
+	GuildId   string
+	UserId    string
+	ChannelId string
+}) error {
+	return nil
+}
+
+func NewAllianceStore() *inMemoryAllianceStore {
+	return &inMemoryAllianceStore{}
+}

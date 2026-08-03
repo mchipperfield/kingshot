@@ -20,8 +20,8 @@ import (
 const serviceCallTimeout = 10 * time.Second
 
 // Register adds the KingShot interaction handler to s once at startup.
-func Register(s *discordgo.Session, svc *kingshot.GiftCodeService) {
-	s.AddHandler(InteractionHandler(svc))
+func Register(s *discordgo.Session, svc *kingshot.GiftCodeService, store kingshot.AllianceStore) {
+	s.AddHandler(InteractionHandler(svc, store))
 }
 
 // GiftCodeCommands returns the slash command definitions for the KingShot gift
@@ -95,10 +95,30 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 			Description: "Adds a new gift code for redemption.",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "code",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "redeem",
 					Description: "The gift code to add.",
-					Required:    true,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "code",
+							Description: "The gift code to add.",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "channel",
+					Description: "The channel to post redemption results to.",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionChannel,
+							Name:        "channel",
+							Description: "The channel where gift code redemption results will be posted. Leave empty to disable.",
+							Required:    true,
+						},
+					},
 				},
 			},
 		},
@@ -108,7 +128,7 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 // InteractionHandler returns a handler that dispatches /player and /code
 // commands, and the unlink confirmation button clicks they can trigger.
 // Register this once at startup via session.AddHandler.
-func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
@@ -126,7 +146,14 @@ func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session
 					handleUnlinkPlayer(s, i)
 				}
 			case "code":
-				handleAddCode(s, i, svc)
+				subcommand := i.ApplicationCommandData().Options[0].Name
+				switch subcommand {
+				case "redeem":
+					handleAddCode(s, i, svc)
+				case "channel":
+					handleSetRedemptionChannel(s, i, allianceStore)
+				}
+
 			}
 		case discordgo.InteractionMessageComponent:
 			handleUnlinkConfirmation(s, i, svc)
@@ -403,4 +430,53 @@ func guildRedemptionChannel(s *discordgo.Session, guildID string) (string, error
 		}
 	}
 	return "", fmt.Errorf("no suitable channel found for guild %s", guildID)
+}
+
+func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCreate, store kingshot.AllianceStore) {
+
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		slog.Error("failed to defer interaction response for set channel", "error", err)
+		return
+	}
+
+	if !hasPermission(i.Member) {
+		reply(s, i, "You do not have permission to set the redemption channel.")
+		return
+	}
+	if store == nil {
+		reply(s, i, "Redemption channel store is not configured.")
+		return
+
+	}
+	channel := i.ApplicationCommandData().Options[0].Options[0].ChannelValue(s)
+
+	req := struct {
+		GuildId   string
+		UserId    string
+		ChannelId string
+	}{
+
+		GuildId:   i.GuildID,
+		UserId:    i.Member.User.ID,
+		ChannelId: channel.ID,
+	}
+
+	if err := store.SetRedemptionChannel(context.Background(), req); err != nil {
+		slog.Error("failed to set redemption channel", "error", err, " guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
+		reply(s, i, "Failed to set redemption channel.")
+		return
+	}
+
+	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.Name))
+}
+
+const GoaferDiscordID = "359734862141194251" // Replace with your actual Discord ID
+func hasPermission(m *discordgo.Member) bool {
+	if m.Permissions&discordgo.PermissionAdministrator != discordgo.PermissionAdministrator && m.User.ID != GoaferDiscordID {
+		return false
+	}
+	return true
 }

@@ -20,7 +20,7 @@ func (c Code) IsExpired() bool { return !c.ExpiredAt.IsZero() }
 type CodeStore interface {
 	// Find looks up a code by value. found is false when the code is not
 	// tracked at all.
-	Find(ctx context.Context, code string) (Code, bool)
+	Find(ctx context.Context, code string) (*Code, bool)
 	// Add stores a code. If a code with the same Value already exists its
 	// state is updated.
 	Add(ctx context.Context, code Code)

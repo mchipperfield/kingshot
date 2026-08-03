@@ -24,10 +24,8 @@ type mapStore struct {
 
 func newMapStore(initial map[string]*Player) *mapStore {
 	players := make(map[string]*Player)
-	if initial != nil {
-		for k, v := range initial {
-			players[k] = v
-		}
+	for k, v := range initial {
+		players[k] = v
 	}
 	return &mapStore{players: players, unlinked: make(map[string]bool)}
 }

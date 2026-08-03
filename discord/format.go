@@ -9,9 +9,6 @@ import (
 	"github.com/mchipperfield/kingshot"
 )
 
-// r4RoleId is the Discord role that is allowed to add gift codes.
-const r4RoleId = "1432032487021875373"
-
 // discordMaxMessageLen is the safe character limit for a single Discord message.
 const discordMaxMessageLen = 1900
 

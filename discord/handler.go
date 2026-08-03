@@ -123,7 +123,7 @@ func InteractionHandler(svc *kingshot.GiftCodeService) func(s *discordgo.Session
 				case "transfer":
 					handleTransferPlayer(s, i, svc)
 				case "unlink":
-					handleUnlinkPlayer(s, i, svc)
+					handleUnlinkPlayer(s, i)
 				}
 			case "code":
 				handleAddCode(s, i, svc)
@@ -269,7 +269,7 @@ const unlinkConfirmCustomID = "player-unlink-confirm:"
 // unlinkCancelCustomID is the custom ID of the unlink flow's cancel button.
 const unlinkCancelCustomID = "player-unlink-cancel"
 
-func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	playerID := i.ApplicationCommandData().Options[0].Options[0].StringValue()
 
 	// Ephemeral: only the invoking user can see or click these buttons.

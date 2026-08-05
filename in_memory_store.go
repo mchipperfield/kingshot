@@ -49,11 +49,7 @@ func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) {
 type inMemoryAllianceStore struct {
 }
 
-func (s *inMemoryAllianceStore) SetRedemptionChannel(ctx context.Context, req struct {
-	GuildId   string
-	UserId    string
-	ChannelId string
-}) error {
+func (s *inMemoryAllianceStore) SetRedemptionChannel(ctx context.Context, req *SetChannelRequest) error {
 	return nil
 }
 

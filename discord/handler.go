@@ -117,6 +117,10 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 							Name:        "channel",
 							Description: "The channel where gift code redemption results will be posted. Leave empty to disable.",
 							Required:    true,
+							ChannelTypes: []discordgo.ChannelType{
+								discordgo.ChannelTypeGuildText,
+								discordgo.ChannelTypeGuildNews,
+							},
 						},
 					},
 				},
@@ -442,41 +446,63 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 
-	if !hasPermission(i.Member) {
+	if !userHasPermission(i.Member) {
 		reply(s, i, "You do not have permission to set the redemption channel.")
 		return
 	}
-	if store == nil {
-		reply(s, i, "Redemption channel store is not configured.")
-		return
 
+	if store == nil {
+		reply(s, i, "Unable to set redemption channel due to a database error.")
+		return
 	}
+
 	channel := i.ApplicationCommandData().Options[0].Options[0].ChannelValue(s)
 
-	req := struct {
-		GuildId   string
-		UserId    string
-		ChannelId string
-	}{
+	if channel.GuildID != i.GuildID {
+		reply(s, i, "The specified channel is not in this guild.")
+		return
+	}
 
+	if channel.Type != discordgo.ChannelTypeGuildText {
+		reply(s, i, "The specified channel is not a text channel.")
+		return
+	}
+
+	if !botHasPermission(s, channel.ID) {
+		reply(s, i, "The bot does not have permission to send messages to this channel.")
+		return
+	}
+
+	req := kingshot.SetChannelRequest{
 		GuildId:   i.GuildID,
 		UserId:    i.Member.User.ID,
 		ChannelId: channel.ID,
 	}
 
-	if err := store.SetRedemptionChannel(context.Background(), req); err != nil {
+	if err := store.SetRedemptionChannel(context.Background(), &req); err != nil {
 		slog.Error("failed to set redemption channel", "error", err, " guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
 		reply(s, i, "Failed to set redemption channel.")
 		return
 	}
 
+	slog.Info("redemption channel set", "user_id", i.Member.User.ID, "channel_id", channel.ID, "guild_id", i.GuildID)
 	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.Name))
 }
 
 const GoaferDiscordID = "359734862141194251" // Replace with your actual Discord ID
-func hasPermission(m *discordgo.Member) bool {
+func userHasPermission(m *discordgo.Member) bool {
 	if m.Permissions&discordgo.PermissionAdministrator != discordgo.PermissionAdministrator && m.User.ID != GoaferDiscordID {
 		return false
 	}
 	return true
+}
+
+func botHasPermission(s *discordgo.Session, channelId string) bool {
+	apermissions, err := s.State.UserChannelPermissions(s.State.User.ID, channelId)
+	if err != nil {
+		slog.Info("failed to get bot permissions for channel", "error", err, "channel_id", channelId, "user_id", s.State.User.ID)
+		return false
+	}
+
+	return apermissions&(discordgo.PermissionSendMessages|discordgo.PermissionViewChannel) == (discordgo.PermissionSendMessages | discordgo.PermissionViewChannel)
 }

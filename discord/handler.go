@@ -457,6 +457,10 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 	}
 
 	channel := i.ApplicationCommandData().Options[0].Options[0].ChannelValue(s)
+	if channel == nil {
+		reply(s, i, "Invalid channel specified.")
+		return
+	}
 
 	if channel.GuildID != i.GuildID {
 		reply(s, i, "The specified channel is not in this guild.")

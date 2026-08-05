@@ -46,7 +46,7 @@ func main() {
 		logger.Log("failed to create discord session", "error", err)
 		os.Exit(1)
 	}
-	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuilds | discordgo.IntentGuildMembers
+	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuilds
 
 	client, err := firestore.NewClient(context.Background(), *firestore_project)
 	if err != nil {
@@ -77,7 +77,7 @@ func main() {
 				return s.ApplicationCommandDelete(s.State.User.ID, "", id)
 			},
 			func(cmd *discordgo.ApplicationCommand) error {
-				_, err := s.ApplicationCommandCreate(s.State.User.ID, "1423406563850190850", cmd)
+				_, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd)
 				return err
 			},
 		)

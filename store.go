@@ -2,6 +2,7 @@ package kingshot
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -61,6 +62,7 @@ type CodeStore interface {
 
 type AllianceStore interface {
 	SetRedemptionChannel(ctx context.Context, req *SetChannelRequest) error
+	GetRedemptionChannel(ctx context.Context, guildId string) (string, error)
 }
 
 type SetChannelRequest struct {
@@ -68,3 +70,5 @@ type SetChannelRequest struct {
 	ChannelId string
 	UserId    string
 }
+
+var ErrNotFound error = errors.New("not found")

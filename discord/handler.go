@@ -153,7 +153,7 @@ func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.Al
 				subcommand := i.ApplicationCommandData().Options[0].Name
 				switch subcommand {
 				case "redeem":
-					handleAddCode(s, i, svc)
+					handleAddCode(s, i, svc, allianceStore)
 				case "channel":
 					handleSetRedemptionChannel(s, i, allianceStore)
 				}
@@ -199,7 +199,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	reply(s, i, formatRegisterResult(result))
 }
 
-func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) {
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
@@ -215,7 +215,7 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 
 	result := svc.ProcessNewCode(ctx, newCode)
 	if result.Added && len(result.PlayerResults) > 0 {
-		posted := postGuildRedemptionResults(s, result.Code, result.PlayerResults)
+		posted := postGuildRedemptionResults(s, allianceStore, result.Code, result.PlayerResults)
 		reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))
 		return
 	}
@@ -377,7 +377,7 @@ func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCrea
 	respondFinal(s, i, formatUnlinkResult(result))
 }
 
-func postGuildRedemptionResults(s *discordgo.Session, code string, results []kingshot.PlayerRedeemResult) []string {
+func postGuildRedemptionResults(s *discordgo.Session, store kingshot.AllianceStore, code string, results []kingshot.PlayerRedeemResult) []string {
 	grouped := make(map[string][]kingshot.PlayerRedeemResult)
 	for _, result := range results {
 		grouped[result.GuildID] = append(grouped[result.GuildID], result)
@@ -392,10 +392,15 @@ func postGuildRedemptionResults(s *discordgo.Session, code string, results []kin
 	postedGuilds := make([]string, 0, len(guildIDs))
 	for _, guildID := range guildIDs {
 		guildResults := grouped[guildID]
-		channelID, err := guildRedemptionChannel(s, guildID)
+		var channelID string
+		channelID, err := store.GetRedemptionChannel(context.Background(), guildID)
 		if err != nil {
-			slog.Error("failed to resolve guild channel for redemption results", "error", err, "guild_id", guildID, "code", code)
-			continue
+			slog.Error("failed to get redemption channel, falling back to default channel", "error", err, "guild_id", guildID, "code", code)
+			channelID, err = guildFindDefaultChannel(s, guildID)
+			if err != nil {
+				slog.Error("failed to resolve guild channel for redemption results", "error", err, "guild_id", guildID, "code", code)
+				continue
+			}
 		}
 
 		lines := make([]string, 0, len(guildResults))
@@ -413,7 +418,7 @@ func postGuildRedemptionResults(s *discordgo.Session, code string, results []kin
 	return postedGuilds
 }
 
-func guildRedemptionChannel(s *discordgo.Session, guildID string) (string, error) {
+func guildFindDefaultChannel(s *discordgo.Session, guildID string) (string, error) {
 	guild, err := s.Guild(guildID)
 	if err != nil {
 		return "", err

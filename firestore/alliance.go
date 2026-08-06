@@ -85,5 +85,25 @@ func (s *AllianceStore) SetRedemptionChannel(ctx context.Context, req *kingshot.
 		})
 
 	})
+}
 
+func (s *AllianceStore) GetRedemptionChannel(ctx context.Context, guildId string) (string, error) {
+	docRef := s.client.Collection("alliances").Doc(guildId)
+	docSnap, err := docRef.Get(ctx)
+	if err != nil {
+		switch status.Code(err) {
+		case codes.NotFound:
+			return "", kingshot.ErrNotFound
+		default:
+			return "", fmt.Errorf("firestore: get redemption channel: failed to get alliance: %w", err)
+		}
+	}
+	var alliance alliance
+	if err := docSnap.DataTo(&alliance); err != nil {
+		return "", fmt.Errorf("firestore: get redemption channel: failed to parse alliance: %w", err)
+	}
+	if alliance.Channel.ChannelId == "" {
+		return "", kingshot.ErrNotFound
+	}
+	return alliance.Channel.ChannelId, nil
 }

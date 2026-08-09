@@ -472,8 +472,8 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 
-	if channel.Type != discordgo.ChannelTypeGuildText {
-		reply(s, i, "The specified channel is not a text channel.")
+	if channel.Type != discordgo.ChannelTypeGuildText && channel.Type != discordgo.ChannelTypeGuildNews {
+		reply(s, i, "The specified channel is not a supported text channel.")
 		return
 	}
 

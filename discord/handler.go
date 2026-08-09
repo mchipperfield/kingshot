@@ -208,10 +208,11 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 		return
 	}
 
-	newCode := i.ApplicationCommandData().Options[0].StringValue()
+	newCode := i.ApplicationCommandData().Options[0].Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
 
 	result := svc.ProcessNewCode(ctx, newCode)
 	if result.Added && len(result.PlayerResults) > 0 {
@@ -498,7 +499,8 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.Name))
 }
 
-const GoaferDiscordID = "359734862141194251" // Replace with your actual Discord ID
+// TODO: remove hardcoded user ID and rely solely on Discord administrator permission check.
+const GoaferDiscordID = "359734862141194251"
 func userHasPermission(m *discordgo.Member) bool {
 	if m.Permissions&discordgo.PermissionAdministrator != discordgo.PermissionAdministrator && m.User.ID != GoaferDiscordID {
 		return false

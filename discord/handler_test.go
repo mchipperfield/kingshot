@@ -37,7 +37,7 @@ func TestGiftCodeCommands(t *testing.T) {
 // unrecognised custom ID.
 func TestInteractionHandler_IgnoresNonAppCommand(t *testing.T) {
 	// svc is never dereferenced for an unrecognised custom ID.
-	h := InteractionHandler(nil)
+	h := InteractionHandler(nil, nil)
 	h(nil, &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionMessageComponent,
@@ -52,7 +52,7 @@ func TestInteractionHandler_IgnoresNonAppCommand(t *testing.T) {
 // handler silently ignores unrecognised slash command names.
 func TestInteractionHandler_IgnoresUnknownCommand(t *testing.T) {
 	// svc is never dereferenced for unknown command names.
-	h := InteractionHandler(nil)
+	h := InteractionHandler(nil, nil)
 	h(nil, &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionApplicationCommand,

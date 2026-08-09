@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"io"
 	"log/slog"
@@ -45,22 +46,25 @@ func main() {
 		logger.Log("failed to create discord session", "error", err)
 		os.Exit(1)
 	}
+	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuilds
 
-	store, err := firestore.NewPlayerStore(*firestore_project)
+	client, err := firestore.NewClient(context.Background(), *firestore_project)
 	if err != nil {
 		logger.Log("failed to create firestore client", "error", err)
 		os.Exit(1)
 	}
 
-	codeStore := firestore.NewCodeStore(store.Client)
-	svc := kingshot.NewWithCodeStore(store, codeStore)
-	discord.Register(session, svc)
+	playerStore := firestore.NewPlayerStore(client)
+	codeStore := firestore.NewCodeStore(client)
+	svc := kingshot.NewWithCodeStore(playerStore, codeStore)
+
+	discord.Register(session, svc, firestore.NewAllianceStore(client))
 
 	commands := discord.GiftCodeCommands()
 	commandNames := commandNameSet(commands)
 
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		slog.Info("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
+		logger.Log("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
 
 		reconcileGlobalCommands(
 			logger,

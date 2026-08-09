@@ -80,7 +80,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	}
 
 	firstPlayer := players[0]
-	redeemResp, err := s.redeemGiftCode(ctx, firstPlayer.PlayerID, firstPlayer.KingdomID, code)
+	redeemResp, err := s.redeemGiftCode(context.Background(), firstPlayer.PlayerID, firstPlayer.KingdomID, code)
 	if err != nil {
 		slog.Error("failed to validate new code", "error", err, "code", code)
 		return CodeResult{Code: code, APIError: err}

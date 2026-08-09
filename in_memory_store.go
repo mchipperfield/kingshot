@@ -21,9 +21,9 @@ func newInMemoryCodeStore(activeCodes ...string) *inMemoryCodeStore {
 	return s
 }
 
-func (s *inMemoryCodeStore) Find(_ context.Context, code string) (Code, bool) {
+func (s *inMemoryCodeStore) Find(_ context.Context, code string) (*Code, bool) {
 	c, ok := s.codes[code]
-	return c, ok
+	return &c, ok
 }
 
 func (s *inMemoryCodeStore) Add(_ context.Context, code Code) {
@@ -44,4 +44,15 @@ func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) {
 	for _, v := range codes {
 		delete(s.codes, v)
 	}
+}
+
+type inMemoryAllianceStore struct {
+}
+
+func (s *inMemoryAllianceStore) SetRedemptionChannel(ctx context.Context, req *SetChannelRequest) error {
+	return nil
+}
+
+func NewAllianceStore() *inMemoryAllianceStore {
+	return &inMemoryAllianceStore{}
 }

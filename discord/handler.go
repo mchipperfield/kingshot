@@ -31,6 +31,7 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 		{
 			Name:        "player",
 			Description: "Player-related commands",
+			Contexts:    &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild},
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Name:        "register",
@@ -91,10 +92,11 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 			},
 		},
 		{
-			Name:        "code",
-			Description: "Gift code redemption commands.",
-			DMPermission: func() *bool { b := false; return &b }(),
+			Name:                     "code",
+			Description:              "Gift code redemption commands.",
+			Contexts:                 &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild},
 			DefaultMemberPermissions: permPointer(discordgo.PermissionAdministrator),
+			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "redeem",

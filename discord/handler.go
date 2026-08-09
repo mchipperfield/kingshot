@@ -91,10 +91,10 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 			},
 		},
 		{
-			Name:                     "code",
-			Description:              "Gift code redemption commands.",
+			Name:        "code",
+			Description: "Gift code redemption commands.",
+			DMPermission: func() *bool { b := false; return &b }(),
 			DefaultMemberPermissions: permPointer(discordgo.PermissionAdministrator),
-			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "redeem",

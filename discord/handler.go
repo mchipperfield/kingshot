@@ -496,11 +496,12 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 	}
 
 	slog.Info("redemption channel set", "user_id", i.Member.User.ID, "channel_id", channel.ID, "guild_id", i.GuildID)
-	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.Name))
+	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.ID))
 }
 
 // TODO: remove hardcoded user ID and rely solely on Discord administrator permission check.
 const GoaferDiscordID = "359734862141194251"
+
 func userHasPermission(m *discordgo.Member) bool {
 	if m.Permissions&discordgo.PermissionAdministrator != discordgo.PermissionAdministrator && m.User.ID != GoaferDiscordID {
 		return false

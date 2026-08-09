@@ -9,7 +9,7 @@ import (
 )
 
 // TestGiftCodeCommands verifies that the command list contains exactly the
-// /player and /code commands, each with at least one required option.
+// /player and /code commands.
 func TestGiftCodeCommands(t *testing.T) {
 	cmds := GiftCodeCommands()
 
@@ -17,18 +17,26 @@ func TestGiftCodeCommands(t *testing.T) {
 		t.Fatalf("expected 2 commands, got %d", len(cmds))
 	}
 
-	names := map[string]bool{}
+	commands := map[string]*discordgo.ApplicationCommand{}
 	for _, c := range cmds {
-		names[c.Name] = true
+		commands[c.Name] = c
 		if len(c.Options) == 0 {
 			t.Errorf("command %q has no options", c.Name)
 		}
 	}
 
 	for _, want := range []string{"player", "code"} {
-		if !names[want] {
-			t.Errorf("expected command %q, not found in %v", want, names)
+		if commands[want] == nil {
+			t.Errorf("expected command %q, not found", want)
 		}
+	}
+
+	codeCommand := commands["code"]
+	if codeCommand.DefaultMemberPermissions == nil || *codeCommand.DefaultMemberPermissions != discordgo.PermissionAdministrator {
+		t.Errorf("expected /code to default to administrator permission")
+	}
+	if len(codeCommand.Options) != 2 || codeCommand.Options[0].Name != "redeem" || codeCommand.Options[1].Name != "channel" {
+		t.Errorf("expected /code redeem and /code channel subcommands, got %v", codeCommand.Options)
 	}
 }
 

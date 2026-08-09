@@ -91,8 +91,9 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 			},
 		},
 		{
-			Name:        "code",
-			Description: "Adds a new gift code for redemption.",
+			Name:                     "code",
+			Description:              "Gift code redemption commands.",
+			DefaultMemberPermissions: permPointer(discordgo.PermissionAdministrator),
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -110,12 +111,12 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "channel",
-					Description: "The channel to post redemption results to.",
+					Description: "Set the channel where gift code redemption results are posted.",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionChannel,
 							Name:        "channel",
-							Description: "The channel where gift code redemption results will be posted. Leave empty to disable.",
+							Description: "The channel where gift code redemption results will be posted.",
 							Required:    true,
 							ChannelTypes: []discordgo.ChannelType{
 								discordgo.ChannelTypeGuildText,
@@ -127,6 +128,10 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 			},
 		},
 	}
+}
+
+func permPointer(p int64) *int64 {
+	return &p
 }
 
 // InteractionHandler returns a handler that dispatches /player and /code
@@ -157,7 +162,6 @@ func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.Al
 				case "channel":
 					handleSetRedemptionChannel(s, i, allianceStore)
 				}
-
 			}
 		case discordgo.InteractionMessageComponent:
 			handleUnlinkConfirmation(s, i, svc)
@@ -443,17 +447,11 @@ func guildFindDefaultChannel(s *discordgo.Session, guildID string) (string, erro
 }
 
 func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCreate, store kingshot.AllianceStore) {
-
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
 	if err != nil {
 		slog.Error("failed to defer interaction response for set channel", "error", err)
-		return
-	}
-
-	if !userHasPermission(i.Member) {
-		reply(s, i, "You do not have permission to set the redemption channel.")
 		return
 	}
 
@@ -490,7 +488,7 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 	}
 
 	if err := store.SetRedemptionChannel(context.Background(), &req); err != nil {
-		slog.Error("failed to set redemption channel", "error", err, " guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
+		slog.Error("failed to set redemption channel", "error", err, "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
 		reply(s, i, "Failed to set redemption channel.")
 		return
 	}
@@ -499,22 +497,12 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.ID))
 }
 
-// TODO: remove hardcoded user ID and rely solely on Discord administrator permission check.
-const GoaferDiscordID = "359734862141194251"
-
-func userHasPermission(m *discordgo.Member) bool {
-	if m.Permissions&discordgo.PermissionAdministrator != discordgo.PermissionAdministrator && m.User.ID != GoaferDiscordID {
-		return false
-	}
-	return true
-}
-
-func botHasPermission(s *discordgo.Session, channelId string) bool {
-	apermissions, err := s.State.UserChannelPermissions(s.State.User.ID, channelId)
+func botHasPermission(s *discordgo.Session, channelID string) bool {
+	permissions, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
 	if err != nil {
-		slog.Info("failed to get bot permissions for channel", "error", err, "channel_id", channelId, "user_id", s.State.User.ID)
+		slog.Info("failed to get bot permissions for channel", "error", err, "channel_id", channelID, "user_id", s.State.User.ID)
 		return false
 	}
 
-	return apermissions&(discordgo.PermissionSendMessages|discordgo.PermissionViewChannel) == (discordgo.PermissionSendMessages | discordgo.PermissionViewChannel)
+	return permissions&(discordgo.PermissionSendMessages|discordgo.PermissionViewChannel) == (discordgo.PermissionSendMessages | discordgo.PermissionViewChannel)
 }

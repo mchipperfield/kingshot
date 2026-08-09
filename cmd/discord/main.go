@@ -46,13 +46,14 @@ func main() {
 		logger.Log("failed to create discord session", "error", err)
 		os.Exit(1)
 	}
-	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuilds
+	session.Identify.Intents = discordgo.IntentsGuilds
 
 	client, err := firestore.NewClient(context.Background(), *firestore_project)
 	if err != nil {
 		logger.Log("failed to create firestore client", "error", err)
 		os.Exit(1)
 	}
+	defer client.Close()
 
 	playerStore := firestore.NewPlayerStore(client)
 	codeStore := firestore.NewCodeStore(client)

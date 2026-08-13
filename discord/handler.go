@@ -19,6 +19,11 @@ import (
 // store or API call fails fast instead of leaving the interaction hanging.
 const serviceCallTimeout = 10 * time.Second
 
+// codeProcessingTimeout bounds sequential gift-code validation and redemption.
+// Discord interaction tokens remain usable for up to 15 minutes, and the
+// service deliberately rate-limits each external API request.
+const codeProcessingTimeout = 15 * time.Minute
+
 // Register adds the KingShot interaction handler to s once at startup.
 func Register(s *discordgo.Session, svc *kingshot.GiftCodeService, store kingshot.AllianceStore) {
 	s.AddHandler(InteractionHandler(svc, store))
@@ -240,7 +245,7 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	newCode := options[0].Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	ctx, cancel := serviceContext()
+	ctx, cancel := context.WithTimeout(context.Background(), codeProcessingTimeout)
 	defer cancel()
 
 	result := svc.ProcessNewCode(ctx, newCode)

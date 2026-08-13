@@ -91,36 +91,41 @@ func (s *GiftCodeService) redeemGiftCode(ctx context.Context, playerID, kingdomI
 	}
 
 	for attempt := 1; attempt <= maxRedeemAttempts; attempt++ {
-		redeemResp, err := s.redeemRequest(ctx, payload)
+		redeemResp, err, retryable := s.redeemRequest(ctx, payload)
 		if err != nil {
-			return nil, err
+			if !retryable || attempt == maxRedeemAttempts {
+				return nil, err
+			}
+			slog.Info("retrying KingShot redemption after invalid response", "attempt", attempt+1, "player_id", playerID, "code", cdk, "error", err)
+			continue
 		}
-		if redeemResp.ErrCode != ErrCodeTimeoutRetry || attempt == maxRedeemAttempts {
+		shouldRetry := redeemResp.ErrCode == ErrCodeTimeoutRetry || retryable
+		if !shouldRetry || attempt == maxRedeemAttempts {
 			return redeemResp, nil
 		}
-		slog.Info("retrying KingShot redemption after timeout response", "attempt", attempt+1, "player_id", playerID, "code", cdk)
+		slog.Info("retrying KingShot redemption after retryable response", "attempt", attempt+1, "player_id", playerID, "code", cdk, "status", retryable, "err_code", redeemResp.ErrCode)
 	}
 
 	return nil, fmt.Errorf("redemption attempts exhausted")
 }
 
-func (s *GiftCodeService) redeemRequest(ctx context.Context, payload string) (*RedeemResponse, error) {
+func (s *GiftCodeService) redeemRequest(ctx context.Context, payload string) (*RedeemResponse, error, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.redeemURL, strings.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, err, false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, err, false
 	}
 	defer resp.Body.Close()
 
 	var redeemResp RedeemResponse
 	if err := json.NewDecoder(resp.Body).Decode(&redeemResp); err != nil {
-		return nil, fmt.Errorf("failed to decode redemption response: %w", err)
+		return nil, fmt.Errorf("failed to decode redemption response: %w", err), true
 	}
-	return &redeemResp, nil
+	return &redeemResp, nil, resp.StatusCode == http.StatusTooManyRequests
 }
 
 // EncodePayload encodes the data map into a signed JSON payload for the

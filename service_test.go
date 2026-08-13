@@ -849,6 +849,49 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 			t.Fatalf("got %d requests, want %d", gotRequests, maxRedeemAttempts)
 		}
 	})
+
+	t.Run("retries malformed response body", func(t *testing.T) {
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requests.Add(1) == 1 {
+				w.Write([]byte("temporarily unavailable"))
+				return
+			}
+			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
+		if got != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", got)
+		}
+		if gotRequests := requests.Load(); gotRequests != 2 {
+			t.Fatalf("got %d requests, want 2", gotRequests)
+		}
+	})
+
+	t.Run("retries HTTP 429", func(t *testing.T) {
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requests.Add(1) == 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+				return
+			}
+			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
+		if got != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", got)
+		}
+		if gotRequests := requests.Load(); gotRequests != 2 {
+			t.Fatalf("got %d requests, want 2", gotRequests)
+		}
+	})
 }
 
 // --- inMemoryCodeStore tests -------------------------------------------------

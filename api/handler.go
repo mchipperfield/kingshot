@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -20,7 +18,7 @@ func NewPrivacyHandler(cfg oauth2.Config, signingKey []byte) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+deletePath, startOAuthFlow(cfg))
 	mux.HandleFunc("GET /oauth/discord/callback", handleOAuthCallback(cfg, signingKey))
-	mux.HandleFunc("POST "+deletePath, ConfirmDeleteMyData(signingKey))
+	mux.HandleFunc("POST "+deletePath, deleteMyData(signingKey))
 	csrf := http.NewCrossOriginProtection()
 	return csrf.Handler(mux)
 }
@@ -100,7 +98,7 @@ func handleOAuthCallback(cfg oauth2.Config, signingKey []byte) func(w http.Respo
 	}
 }
 
-func ConfirmDeleteMyData(signingKey []byte) func(w http.ResponseWriter, r *http.Request) {
+func deleteMyData(signingKey []byte) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		sessionCookie, err := r.Cookie(privacySessionCookie)
@@ -121,13 +119,4 @@ func ConfirmDeleteMyData(signingKey []byte) func(w http.ResponseWriter, r *http.
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "your data has been deleted")
 	}
-}
-
-func generateStateToken() (string, error) {
-	b := make([]byte, 32)
-	_, err := rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }

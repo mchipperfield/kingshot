@@ -193,10 +193,6 @@ func deferInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, resp
 	return true
 }
 
-func serviceContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), serviceCallTimeout)
-}
-
 func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 || len(options[0].Options) < 2 {
@@ -207,7 +203,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
-	ctx, cancel := serviceContext()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
 	options = options[0].Options
@@ -266,7 +262,7 @@ func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, sv
 		return
 	}
 
-	ctx, cancel := serviceContext()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
 	players, err := svc.GetPlayersByUser(ctx, i.Member.User.ID)
@@ -300,7 +296,7 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
-	ctx, cancel := serviceContext()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
 	options = options[0].Options
@@ -397,7 +393,7 @@ func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	ctx, cancel := serviceContext()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
 	req := kingshot.UnlinkPlayerRequest{
@@ -518,7 +514,7 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code channel") {
 		return
 	}
-	ctx, cancel := serviceContext()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
 	if store == nil {

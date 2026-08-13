@@ -19,12 +19,23 @@ const (
 )
 
 func clearCookie(w http.ResponseWriter, name string) {
+	var path string
+	switch name {
+	case oauthStateCookie:
+		path = "/oauth/discord/callback"
+	case privacySessionCookie:
+		path = deletePath
+	default:
+		slog.Error("attempted to clear unknown cookie", "name", name)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    "",
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
+		Path:     path,
 		Expires:  time.Now(),
 		MaxAge:   -1,
 	})

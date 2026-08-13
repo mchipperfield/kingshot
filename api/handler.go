@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 
 	"golang.org/x/oauth2"
 )
@@ -94,7 +93,6 @@ func handleOAuthCallback(cfg oauth2.Config, signingKey []byte) func(w http.Respo
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `<form method="POST" action="/delete"><p>Are you sure?</p><input type="submit" /></form>`)
-		fmt.Fprintf(os.Stdout, "user: %+v", user)
 	}
 }
 

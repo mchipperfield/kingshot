@@ -24,9 +24,11 @@ const serviceCallTimeout = 10 * time.Second
 // service deliberately rate-limits each external API request.
 const codeProcessingTimeout = 15 * time.Minute
 
-// Register adds the KingShot interaction handler to s once at startup.
-func Register(s *discordgo.Session, svc *kingshot.GiftCodeService, store kingshot.AllianceStore) {
+// RegisterGiftCodeHandler adds the KingShot interaction handler to s and
+// contributes its application commands to the shared registry.
+func RegisterGiftCodeHandler(s *discordgo.Session, registry *CommandRegistry, svc *kingshot.GiftCodeService, store kingshot.AllianceStore) {
 	s.AddHandler(InteractionHandler(svc, store))
+	registry.Add(GiftCodeCommands()...)
 }
 
 // GiftCodeCommands returns the slash command definitions for the KingShot gift

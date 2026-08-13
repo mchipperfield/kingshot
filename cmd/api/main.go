@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mchipperfield/kingshot/api"
+	"github.com/mchipperfield/kingshot/firestore"
 	"github.com/peterbourgon/ff"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/endpoints"
@@ -24,11 +25,12 @@ import (
 func main() {
 	fs := flag.NewFlagSet("", flag.ContinueOnError)
 	var (
-		port                  = fs.Int("listen_address", 3000, "HTTP server listen address")
+		port                  = fs.Int("listen_address", 8080, "HTTP server listen address")
 		discord_client_id     = fs.String("discord_client_id", "", "Discord OAuth2 client ID")
 		discord_client_secret = fs.String("discord_client_secret", "", "Discord OAuth2 client secret")
 		discord_redirect_uri  = fs.String("discord_redirect_uri", "http://localhost:3000/oauth/discord/callback", "Discord OAuth2 redirect URI")
 		signing_key           = fs.String("signing_key", "", "Signing key for session cookies")
+		firestore_project_id  = fs.String("firestore_project_id", "", "Google Cloud Firestore project ID")
 	)
 
 	if err := ff.Parse(fs,
@@ -40,6 +42,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *discord_client_id == "" || *discord_client_secret == "" || *signing_key == "" || *firestore_project_id == "" {
+		slog.Error("missing required flags")
+		os.Exit(1)
+	}
+
 	cfg := oauth2.Config{
 		ClientID:     *discord_client_id,
 		ClientSecret: *discord_client_secret,
@@ -47,7 +54,13 @@ func main() {
 		RedirectURL:  *discord_redirect_uri,
 		Scopes:       []string{"identify"},
 	}
-	handler := api.NewPrivacyHandler(cfg, []byte(*signing_key))
+	client, err := firestore.NewClient(context.Background(), *firestore_project_id)
+	if err != nil {
+		slog.Error("failed to create Firestore client", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+	handler := api.NewPrivacyHandler(cfg, []byte(*signing_key), firestore.NewPrivacyService(client))
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", *port),

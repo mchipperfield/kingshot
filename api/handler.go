@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,19 +15,18 @@ const (
 	deletePath = "/delete"
 )
 
-func NewPrivacyHandler(cfg oauth2.Config, signingKey []byte) http.Handler {
+type PrivacyService interface {
+	DeleteUserData(ctx context.Context, userID string) error
+}
+
+func NewPrivacyHandler(cfg oauth2.Config, signingKey []byte, svc PrivacyService) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+deletePath, startOAuthFlow(cfg))
 	mux.HandleFunc("GET /oauth/discord/callback", handleOAuthCallback(cfg, signingKey))
-	mux.HandleFunc("POST "+deletePath, deleteMyData(signingKey))
+	mux.HandleFunc("POST "+deletePath, deleteMyData(svc, signingKey))
 	csrf := http.NewCrossOriginProtection()
 	return csrf.Handler(mux)
 }
-
-const (
-	oauthStateCookie     = "privacy_oauth_state"
-	privacySessionCookie = "privacy_session"
-)
 
 func startOAuthFlow(cfg oauth2.Config) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func handleOAuthCallback(cfg oauth2.Config, signingKey []byte) func(w http.Respo
 	}
 }
 
-func deleteMyData(signingKey []byte) func(w http.ResponseWriter, r *http.Request) {
+func deleteMyData(svc PrivacyService, signingKey []byte) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		sessionCookie, err := r.Cookie(privacySessionCookie)
@@ -108,15 +108,22 @@ func deleteMyData(signingKey []byte) func(w http.ResponseWriter, r *http.Request
 			http.Error(w, "failed to get session cookie", http.StatusUnauthorized)
 			return
 		}
-		_, err = parseAndVerifySessionCookie(sessionCookie.Value, signingKey)
+		userId, err := parseAndVerifySessionCookie(sessionCookie.Value, signingKey)
 		if err != nil {
 			slog.Error("failed to verify session cookie", "error", err)
 			http.Error(w, "failed to verify session cookie", http.StatusUnauthorized)
 			return
 		}
 
+		if err := svc.DeleteUserData(r.Context(), userId); err != nil {
+			slog.Error("failed to delete user data", "error", err)
+			http.Error(w, "failed to delete user data, if the problem persists contact the site administrator", http.StatusInternalServerError)
+			return
+		}
+		slog.Info("user data deleted", "user_id", userId)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "your data has been deleted")
+		fmt.Fprintf(w, "Your data has been deleted.")
+
 	}
 }

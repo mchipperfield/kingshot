@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	oauthStateCookie     = "privacy_oauth_state"
+	privacySessionCookie = "privacy_session"
+)
+
 func clearCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,

@@ -36,29 +36,29 @@ func NewCodeStore(client *firestore.Client) *CodeStore {
 
 // Find looks up a code by value.
 // The caller should check code expiration with code.IsExpired().
-func (cs *CodeStore) Find(ctx context.Context, code string) (*kingshot.Code, bool) {
+func (cs *CodeStore) Find(ctx context.Context, code string) (*kingshot.Code, bool, error) {
 	snap, err := cs.client.Collection("codes").Doc(code).Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return nil, false
+			return nil, false, nil
 		}
 		slog.Error("CodeStore.Find: failed to get code", "code", code, "error", err)
-		return nil, false
+		return nil, false, err
 	}
 
 	var d codeDoc
 	if err := snap.DataTo(&d); err != nil {
 		slog.Error("CodeStore.Find: failed to decode code document", "code", code, "error", err)
-		return nil, false
+		return nil, false, err
 	}
 
-	return &kingshot.Code{Value: d.Value, ExpiredAt: d.ExpiredAt}, true
+	return &kingshot.Code{Value: d.Value, ExpiredAt: d.ExpiredAt}, true, nil
 }
 
 // Add stores code. If a document with the same Value already exists its state
 // is overwritten. Codes whose ExpiredAt is non-zero are stored with
 // is_active=false so they are excluded from ActiveCodes queries.
-func (cs *CodeStore) Add(ctx context.Context, code kingshot.Code) {
+func (cs *CodeStore) Add(ctx context.Context, code kingshot.Code) error {
 	_, err := cs.client.Collection("codes").Doc(code.Value).Set(ctx, map[string]any{
 		"value":      code.Value,
 		"expired_at": code.ExpiredAt,
@@ -67,11 +67,12 @@ func (cs *CodeStore) Add(ctx context.Context, code kingshot.Code) {
 	if err != nil {
 		slog.Error("CodeStore.Add: failed to store code", "code", code.Value, "error", err)
 	}
+	return err
 }
 
 // ActiveCodes returns the values of all codes that are currently active (i.e.
 // not expired and not removed).
-func (cs *CodeStore) ActiveCodes(ctx context.Context) []string {
+func (cs *CodeStore) ActiveCodes(ctx context.Context) ([]string, error) {
 	var codes []string
 	iter := cs.client.Collection("codes").Where("is_active", "==", true).Documents(ctx)
 	for {
@@ -81,22 +82,22 @@ func (cs *CodeStore) ActiveCodes(ctx context.Context) []string {
 		}
 		if err != nil {
 			slog.Error("CodeStore.ActiveCodes: iteration error", "error", err)
-			break
+			return nil, err
 		}
 		var d codeDoc
 		if err := snap.DataTo(&d); err != nil {
 			slog.Error("CodeStore.ActiveCodes: failed to decode code document", "error", err)
-			continue
+			return nil, err
 		}
 		codes = append(codes, d.Value)
 	}
-	return codes
+	return codes, nil
 }
 
 // RemoveActive marks the named codes as inactive (is_active=false) with an
 // expired_at timestamp so that subsequent Find calls correctly identify them
 // as expired. Codes that are not present are silently ignored.
-func (cs *CodeStore) RemoveActive(ctx context.Context, codes ...string) {
+func (cs *CodeStore) RemoveActive(ctx context.Context, codes ...string) error {
 	now := time.Now()
 	for _, code := range codes {
 		_, err := cs.client.Collection("codes").Doc(code).Set(ctx, map[string]any{
@@ -105,6 +106,8 @@ func (cs *CodeStore) RemoveActive(ctx context.Context, codes ...string) {
 		}, firestore.MergeAll)
 		if err != nil {
 			slog.Error("CodeStore.RemoveActive: failed to mark code inactive", "code", code, "error", err)
+			return err
 		}
 	}
+	return nil
 }

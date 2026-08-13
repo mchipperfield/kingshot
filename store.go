@@ -49,15 +49,15 @@ func (c Code) IsExpired() bool { return !c.ExpiredAt.IsZero() }
 type CodeStore interface {
 	// Find looks up a code by value. found is false when the code is not
 	// tracked at all.
-	Find(ctx context.Context, code string) (*Code, bool)
+	Find(ctx context.Context, code string) (*Code, bool, error)
 	// Add stores a code. If a code with the same Value already exists its
 	// state is updated.
-	Add(ctx context.Context, code Code)
+	Add(ctx context.Context, code Code) error
 	// ActiveCodes returns a snapshot of all currently active codes.
-	ActiveCodes(ctx context.Context) []string
+	ActiveCodes(ctx context.Context) ([]string, error)
 	// RemoveActive removes the named codes from the active set. Codes that are
 	// not present are silently ignored.
-	RemoveActive(ctx context.Context, codes ...string)
+	RemoveActive(ctx context.Context, codes ...string) error
 }
 
 type AllianceStore interface {

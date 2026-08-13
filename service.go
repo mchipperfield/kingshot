@@ -61,7 +61,9 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if c, found := s.codeStore.Find(ctx, code); found {
+	if c, found, err := s.codeStore.Find(ctx, code); err != nil {
+		return CodeResult{Code: code, StoreError: err}
+	} else if found {
 		if !c.IsExpired() {
 			return CodeResult{Code: code, AlreadyActive: true}
 		}
@@ -74,7 +76,9 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 	}
 
 	if len(players) == 0 {
-		s.codeStore.Add(ctx, Code{Value: code})
+		if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
+			return CodeResult{Code: code, StoreError: err}
+		}
 		slog.Info("code added with no registered players", "code", code)
 		return CodeResult{Code: code, Added: true}
 	}
@@ -90,7 +94,9 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 
 	outcome := interpretRedeemResult(redeemResp.ErrCode)
 	if outcome.codeExpired {
-		s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()})
+		if err := s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()}); err != nil {
+			return CodeResult{Code: code, StoreError: err}
+		}
 		return CodeResult{Code: code, AlreadyExpired: true}
 	}
 	if outcome.codeInvalid {
@@ -101,7 +107,9 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeR
 		return CodeResult{Code: code, InvalidPlayer: true}
 	}
 
-	s.codeStore.Add(ctx, Code{Value: code})
+	if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
+		return CodeResult{Code: code, StoreError: err}
+	}
 	slog.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
@@ -185,7 +193,15 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 
 	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
 
-	codeResults := s.redeemActiveCodes(ctx, player)
+	codeResults, err := s.redeemActiveCodes(ctx, player)
+	if err != nil {
+		return RegisterResult{
+			PlayerID:    req.PlayerID,
+			UserID:      req.UserID,
+			StoreError:  err,
+			CodeResults: codeResults,
+		}
+	}
 	return RegisterResult{
 		PlayerID:    req.PlayerID,
 		UserID:      req.UserID,
@@ -314,10 +330,13 @@ func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, c
 
 // redeemActiveCodes redeems all currently active codes for playerID and returns
 // a slice of per-code results. Caller must hold s.mu.
-func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) []ActiveCodeResult {
-	active := s.codeStore.ActiveCodes(ctx)
+func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) ([]ActiveCodeResult, error) {
+	active, err := s.codeStore.ActiveCodes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if len(active) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var results []ActiveCodeResult
@@ -340,8 +359,10 @@ func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player)
 	}
 
 	if len(codesToRemove) > 0 {
-		s.codeStore.RemoveActive(ctx, codesToRemove...)
+		if err := s.codeStore.RemoveActive(ctx, codesToRemove...); err != nil {
+			return results, err
+		}
 	}
 
-	return results
+	return results, nil
 }

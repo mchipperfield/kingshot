@@ -36,7 +36,7 @@ func clearCookie(w http.ResponseWriter, name string) {
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 		Path:     path,
-		Expires:  time.Now(),
+		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 	})
 }

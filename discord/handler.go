@@ -141,11 +141,20 @@ func permPointer(p int64) *int64 {
 // Register this once at startup via session.AddHandler.
 func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i == nil || i.Interaction == nil {
+			slog.Error("received nil Discord interaction")
+			return
+		}
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
-			switch i.ApplicationCommandData().Name {
+			data := i.ApplicationCommandData()
+			if len(data.Options) == 0 {
+				slog.Error("received application command without options", "command", data.Name)
+				return
+			}
+			switch data.Name {
 			case "player":
-				subcommand := i.ApplicationCommandData().Options[0].Name
+				subcommand := data.Options[0].Name
 				switch subcommand {
 				case "register":
 					handleRegisterPlayer(s, i, svc)
@@ -157,7 +166,7 @@ func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.Al
 					handleUnlinkPlayer(s, i)
 				}
 			case "code":
-				subcommand := i.ApplicationCommandData().Options[0].Name
+				subcommand := data.Options[0].Name
 				switch subcommand {
 				case "redeem":
 					handleAddCode(s, i, svc, allianceStore)
@@ -172,6 +181,11 @@ func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.Al
 }
 
 func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 || len(options[0].Options) < 2 {
+		slog.Error("received malformed player register interaction")
+		return
+	}
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
@@ -183,7 +197,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
-	options := i.ApplicationCommandData().Options[0].Options
+	options = options[0].Options
 	var playerID, kingdomID string
 	for _, opt := range options {
 		switch opt.Name {
@@ -206,6 +220,11 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 }
 
 func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) {
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 || len(options[0].Options) < 1 {
+		slog.Error("received malformed code redeem interaction")
+		return
+	}
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
@@ -214,7 +233,7 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 		return
 	}
 
-	newCode := i.ApplicationCommandData().Options[0].Options[0].StringValue()
+	newCode := options[0].Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
 	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
@@ -267,6 +286,11 @@ func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, sv
 }
 
 func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 || len(options[0].Options) < 2 {
+		slog.Error("received malformed player transfer interaction")
+		return
+	}
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
@@ -278,7 +302,7 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
-	options := i.ApplicationCommandData().Options[0].Options
+	options = options[0].Options
 	var playerID, newKingdomID string
 	for _, opt := range options {
 		switch opt.Name {
@@ -308,7 +332,12 @@ const unlinkConfirmCustomID = "player-unlink-confirm:"
 const unlinkCancelCustomID = "player-unlink-cancel"
 
 func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	playerID := i.ApplicationCommandData().Options[0].Options[0].StringValue()
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 || len(options[0].Options) < 1 {
+		slog.Error("received malformed player unlink interaction")
+		return
+	}
+	playerID := options[0].Options[0].StringValue()
 
 	// Ephemeral: only the invoking user can see or click these buttons.
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -484,6 +513,11 @@ func guildFindDefaultChannels(s *discordgo.Session, guildID string) ([]string, e
 }
 
 func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCreate, store kingshot.AllianceStore) {
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 || len(options[0].Options) < 1 {
+		slog.Error("received malformed code channel interaction")
+		return
+	}
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	})
@@ -499,7 +533,7 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 
-	channel := i.ApplicationCommandData().Options[0].Options[0].ChannelValue(s)
+	channel := options[0].Options[0].ChannelValue(s)
 	if channel == nil {
 		reply(s, i, "Invalid channel specified.")
 		return

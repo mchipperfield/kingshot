@@ -72,6 +72,29 @@ func TestInteractionHandler_IgnoresUnknownCommand(t *testing.T) {
 	})
 }
 
+func TestInteractionHandler_IgnoresMalformedCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []discordgo.ApplicationCommandInteractionData{
+		{Name: "player"},
+		{Name: "player", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "register"}}},
+		{Name: "code", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "redeem"}}},
+		{Name: "player", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "transfer"}}},
+		{Name: "player", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "unlink"}}},
+		{Name: "code", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "channel"}}},
+	}
+
+	h := InteractionHandler(nil, nil)
+	for _, data := range tests {
+		h(nil, &discordgo.InteractionCreate{
+			Interaction: &discordgo.Interaction{
+				Type: discordgo.InteractionApplicationCommand,
+				Data: data,
+			},
+		})
+	}
+}
+
 // TestChunkMessage verifies that long messages are split correctly.
 func TestChunkMessage(t *testing.T) {
 	t.Run("short message returned as-is", func(t *testing.T) {

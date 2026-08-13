@@ -64,4 +64,4 @@ We may update this policy when the service or its data practices change. The eff
 
 ## Contact
 
-For questions about this policy or a privacy request, contact the operator or maintainers of the KingShot service through the service's official support channel.
+For questions about this policy or a privacy request, contact the service owner through the [owner's GitHub profile](https://github.com/mchipperfield).

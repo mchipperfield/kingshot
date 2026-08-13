@@ -21,7 +21,8 @@
 | `/player status` | Show the invoking user's active player registrations. |
 | `/player transfer player-id:<id> new-kingdom-id:<id>` | Move a linked player to another kingdom. |
 | `/player unlink player-id:<id>` | Confirm and remove the link, excluding the player from future redemptions. |
-| `/code code:<gift-code>` | Validate a gift code and redeem it for all active players. |
+| `/code redeem code:<gift-code>` | Validate a gift code and redeem it for all active players. |
+| `/code channel channel:<channel>` | Set the channel where gift-code redemption results are posted. |
 
 Commands are registered globally. Discord can take time to propagate global command changes.
 
@@ -63,17 +64,26 @@ When `/code` succeeds, results are grouped by the guild where each player regist
 ├── result.go                 # Structured service results
 ├── store.go                  # PlayerStore and CodeStore contracts
 ├── in_memory_code_store.go   # Default non-persistent CodeStore
-├── cmd/discord/
-│   └── main.go               # Bot entrypoint and dependency wiring
+├── api/
+│   ├── cookies.go             # OAuth state and privacy session cookies
+│   └── handler.go             # Privacy deletion HTTP handlers
+├── cmd/
+│   ├── api/
+│   │   └── main.go            # App Engine privacy API entrypoint
+│   └── discord/
+│       └── main.go            # VM-hosted Discord bot entrypoint
 ├── discord/
 │   ├── handler.go            # Slash commands and Discord event handlers
 │   └── format.go             # User-facing result formatting
 ├── firestore/
 │   ├── service.go            # Firestore client construction
 │   ├── player.go             # Firestore PlayerStore
-│   └── code.go               # Firestore CodeStore
-└── docs/
-		└── code-store-refactor-plan.md
+│   ├── code.go               # Firestore CodeStore
+│   ├── alliance.go            # Firestore AllianceStore
+│   └── privacy.go             # Firestore privacy deletion service
+├── PRIVACY.md                # Privacy policy
+├── TERMS.md                  # Terms of service
+└── app.yaml                  # Local App Engine deployment configuration
 ```
 
 Tests live beside the packages they cover in `*_test.go` files.
@@ -89,7 +99,9 @@ Invite the bot with the `bot` and `applications.commands` OAuth2 scopes. It need
 
 ## Configuration
 
-Configuration can be supplied as flags, environment variables, or entries in a `.env` file.
+Configuration can be supplied as flags, environment variables, or entries in a `.env` file. The Discord bot and privacy API use different configuration values.
+
+### Discord bot
 
 | Flag / `.env` key | Required | Description |
 | --- | --- | --- |
@@ -103,7 +115,23 @@ BOT_TOKEN=replace-with-your-discord-bot-token
 FIRESTORE_PROJECT_ID=your-gcp-project-id
 ```
 
-Do not commit `.env` or a real bot token.
+### Privacy API
+
+| Flag / environment variable | Required | Description |
+| --- | --- | --- |
+| `discord_client_id` | Yes | Discord OAuth application client ID. |
+| `discord_client_secret` | Yes | Discord OAuth application client secret. |
+| `discord_redirect_uri` | Yes | OAuth callback URI registered with Discord. |
+| `signing_key` | Yes | HMAC key used to sign privacy session cookies. |
+| `firestore_project_id` | Yes | Google Cloud project containing the Firestore database. |
+
+For App Engine, these values are supplied through the local, ignored `app.yaml` deployment configuration. The production callback URI is:
+
+```text
+https://kingshot-8539b.ew.r.appspot.com/oauth/discord/callback
+```
+
+Do not commit `.env`, `app.yaml`, or real credentials.
 
 For local development, authenticate Google Cloud Application Default Credentials before starting the bot:
 
@@ -112,6 +140,8 @@ gcloud auth application-default login
 ```
 
 ## Run
+
+Run the Discord bot locally:
 
 ```bash
 go run ./cmd/discord
@@ -127,6 +157,20 @@ go run ./cmd/discord \
 
 Stop the bot with `Ctrl+C`.
 
+Run the privacy API locally:
+
+```bash
+go run ./cmd/api
+```
+
+The privacy API listens on port `8080` by default. Its deletion flow is available at `/delete`.
+
+Deploy the privacy API to App Engine from the repository root:
+
+```bash
+gcloud app deploy app.yaml
+```
+
 ## Test
 
 ```bash
@@ -134,3 +178,7 @@ go test ./...
 ```
 
 Most service and handler tests use test doubles and do not require Discord or Firestore credentials.
+
+## Policies
+
+Read the [Privacy Policy](PRIVACY.md) and [Terms of Service](TERMS.md) before using the service.

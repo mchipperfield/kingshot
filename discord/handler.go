@@ -399,24 +399,24 @@ func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store
 	postedGuilds := make([]string, 0, len(guildIDs))
 	for _, guildID := range guildIDs {
 		guildResults := grouped[guildID]
-		var channelID string
-		channelID, err := store.GetRedemptionChannel(ctx, guildID)
-		if err != nil {
-			slog.Error("failed to get redemption channel, falling back to default channel", "error", err, "guild_id", guildID, "code", code)
-			channelID, err = guildFindDefaultChannel(s, guildID)
-			if err != nil {
-				slog.Error("failed to resolve guild channel for redemption results", "error", err, "guild_id", guildID, "code", code)
-				continue
-			}
-		}
+		channelIDs := redemptionChannelCandidates(ctx, s, store, guildID)
 
 		lines := make([]string, 0, len(guildResults))
 		for _, result := range guildResults {
 			lines = append(lines, fmt.Sprintf("Player `%s`: %s", result.PlayerID, result.Message))
 		}
 		message := formatRedemptionReport(code, len(guildResults), lines)
-		if _, err := s.ChannelMessageSend(channelID, message); err != nil {
-			slog.Error("failed to post guild redemption results", "error", err, "guild_id", guildID, "channel_id", channelID, "code", code)
+		posted := false
+		for _, channelID := range channelIDs {
+			if _, err := s.ChannelMessageSend(channelID, message); err != nil {
+				slog.Error("failed to post guild redemption results", "error", err, "guild_id", guildID, "channel_id", channelID, "code", code)
+				continue
+			}
+			posted = true
+			break
+		}
+		if !posted {
+			slog.Error("failed to post guild redemption results to any channel", "guild_id", guildID, "code", code)
 			continue
 		}
 		postedGuilds = append(postedGuilds, guildID)
@@ -425,27 +425,62 @@ func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store
 	return postedGuilds
 }
 
-func guildFindDefaultChannel(s *discordgo.Session, guildID string) (string, error) {
-	guild, err := s.Guild(guildID)
-	if err != nil {
-		return "", err
-	}
-	if guild.SystemChannelID != "" {
-		return guild.SystemChannelID, nil
-	}
-	if guild.PublicUpdatesChannelID != "" {
-		return guild.PublicUpdatesChannelID, nil
-	}
-	channels, err := s.GuildChannels(guildID)
-	if err != nil {
-		return "", err
-	}
-	for _, channel := range channels {
-		if channel.Type == discordgo.ChannelTypeGuildText {
-			return channel.ID, nil
+func redemptionChannelCandidates(ctx context.Context, s *discordgo.Session, store kingshot.AllianceStore, guildID string) []string {
+	var candidates []string
+	if store != nil {
+		channelID, err := store.GetRedemptionChannel(ctx, guildID)
+		if err == nil {
+			candidates = appendUnique(candidates, channelID)
+		} else {
+			slog.Error("failed to get redemption channel, falling back to default channels", "error", err, "guild_id", guildID)
 		}
 	}
-	return "", fmt.Errorf("no suitable channel found for guild %s", guildID)
+
+	defaultChannels, err := guildFindDefaultChannels(s, guildID)
+	if err != nil {
+		slog.Error("failed to resolve default guild channels", "error", err, "guild_id", guildID)
+		return candidates
+	}
+	for _, channelID := range defaultChannels {
+		candidates = appendUnique(candidates, channelID)
+	}
+	return candidates
+}
+
+func appendUnique(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func guildFindDefaultChannels(s *discordgo.Session, guildID string) ([]string, error) {
+	guild, err := s.Guild(guildID)
+	if err != nil {
+		return nil, err
+	}
+	channels := make([]string, 0, 2)
+	if guild.SystemChannelID != "" {
+		channels = appendUnique(channels, guild.SystemChannelID)
+	}
+	if guild.PublicUpdatesChannelID != "" {
+		channels = appendUnique(channels, guild.PublicUpdatesChannelID)
+	}
+	guildChannels, err := s.GuildChannels(guildID)
+	if err != nil {
+		return channels, err
+	}
+	for _, channel := range guildChannels {
+		if channel.Type == discordgo.ChannelTypeGuildText {
+			channels = appendUnique(channels, channel.ID)
+		}
+	}
+	return channels, nil
 }
 
 func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCreate, store kingshot.AllianceStore) {

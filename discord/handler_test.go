@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -110,6 +111,18 @@ func TestChunkMessage(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAppendUnique(t *testing.T) {
+	values := []string{"system", "updates"}
+	values = appendUnique(values, "")
+	values = appendUnique(values, "updates")
+	values = appendUnique(values, "text")
+
+	want := []string{"system", "updates", "text"}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("appendUnique() = %v, want %v", values, want)
+	}
 }
 
 // TestFormatCodeResult verifies that every CodeResult variant produces a

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -36,8 +37,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *token == "" {
-		logger.Log("failed to validate configuration", "error", "bot_token is required")
+	if err := validateConfig(*token, *firestore_project); err != nil {
+		logger.Log("failed to validate configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -92,6 +93,16 @@ func main() {
 
 type logger struct {
 	*slog.Logger
+}
+
+func validateConfig(token, firestoreProject string) error {
+	if token == "" {
+		return fmt.Errorf("bot_token is required")
+	}
+	if firestoreProject == "" {
+		return fmt.Errorf("firestore_project_id is required")
+	}
+	return nil
 }
 
 func (l logger) Log(msg string, keyvals ...any) error {

@@ -23,9 +23,13 @@ type GiftCodeService struct {
 // New returns a GiftCodeService ready for use. Any activeCodes provided are
 // pre-loaded as already-active codes.
 func New(store PlayerStore, activeCodes ...string) *GiftCodeService {
+	return newGiftCodeService(store, newInMemoryCodeStore(activeCodes...))
+}
+
+func newGiftCodeService(store PlayerStore, codeStore CodeStore) *GiftCodeService {
 	return &GiftCodeService{
 		store:     store,
-		codeStore: newInMemoryCodeStore(activeCodes...),
+		codeStore: codeStore,
 		redeemURL: defaultRedeemURL,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
@@ -41,17 +45,7 @@ func New(store PlayerStore, activeCodes ...string) *GiftCodeService {
 // CodeStore implementation (e.g. Firestore) is preferred over the in-memory
 // default.
 func NewWithCodeStore(store PlayerStore, cs CodeStore) *GiftCodeService {
-	return &GiftCodeService{
-		store:     store,
-		codeStore: cs,
-		redeemURL: defaultRedeemURL,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &transport{
-				limiter: rate.NewLimiter(rate.Every(2*time.Second), 1),
-			},
-		},
-	}
+	return newGiftCodeService(store, cs)
 }
 
 // ProcessNewCode validates code against the KingShot API and redeems it for

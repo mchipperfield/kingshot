@@ -20,9 +20,9 @@ type GiftCodeService struct {
 	redeemURL string
 }
 
-// NewWithCodeStore returns a GiftCodeService using the supplied PlayerStore
+// NewService returns a GiftCodeService using the supplied PlayerStore
 // and CodeStore implementations, such as the Firestore-backed stores.
-func NewWithCodeStore(store PlayerStore, cs CodeStore) *GiftCodeService {
+func NewService(store PlayerStore, cs CodeStore) *GiftCodeService {
 	return &GiftCodeService{
 		store:     store,
 		codeStore: cs,

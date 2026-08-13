@@ -185,7 +185,7 @@ RemoveActive(ctx context.Context, codes ...string) error
 
 ### Work
 
-- Extract shared `GiftCodeService` construction used by `New` and `NewWithCodeStore`.
+- Validate the single `NewService` constructor and keep its dependencies explicit.
 - Validate all required Discord bot startup configuration, including `firestore_project_id`.
 - Use consistent configuration error messages and logger behavior.
 - Keep client ownership and shutdown behavior explicit.

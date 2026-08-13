@@ -111,7 +111,7 @@ func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingsh
 		var p player
 		if err := doc.DataTo(&p); err != nil {
 			slog.Error("failed to decode player document", "error", err, "doc_id", doc.Ref.ID)
-			continue
+			return nil, err
 		}
 		players = append(players, &kingshot.Player{
 			PlayerID:  p.PlayerID,

@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -71,6 +72,29 @@ func TestInteractionHandler_IgnoresUnknownCommand(t *testing.T) {
 	})
 }
 
+func TestInteractionHandler_IgnoresMalformedCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []discordgo.ApplicationCommandInteractionData{
+		{Name: "player"},
+		{Name: "player", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "register"}}},
+		{Name: "code", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "redeem"}}},
+		{Name: "player", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "transfer"}}},
+		{Name: "player", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "unlink"}}},
+		{Name: "code", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "channel"}}},
+	}
+
+	h := InteractionHandler(nil, nil)
+	for _, data := range tests {
+		h(nil, &discordgo.InteractionCreate{
+			Interaction: &discordgo.Interaction{
+				Type: discordgo.InteractionApplicationCommand,
+				Data: data,
+			},
+		})
+	}
+}
+
 // TestChunkMessage verifies that long messages are split correctly.
 func TestChunkMessage(t *testing.T) {
 	t.Run("short message returned as-is", func(t *testing.T) {
@@ -110,6 +134,18 @@ func TestChunkMessage(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAppendUnique(t *testing.T) {
+	values := []string{"system", "updates"}
+	values = appendUnique(values, "")
+	values = appendUnique(values, "updates")
+	values = appendUnique(values, "text")
+
+	want := []string{"system", "updates", "text"}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("appendUnique() = %v, want %v", values, want)
+	}
 }
 
 // TestFormatCodeResult verifies that every CodeResult variant produces a

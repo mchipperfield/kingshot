@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -36,8 +37,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *token == "" {
-		logger.Log("failed to validate configuration", "error", "bot_token is required")
+	if err := validateConfig(*token, *firestore_project); err != nil {
+		logger.Log("failed to validate configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -57,12 +58,11 @@ func main() {
 
 	playerStore := firestore.NewPlayerStore(client)
 	codeStore := firestore.NewCodeStore(client)
-	svc := kingshot.NewWithCodeStore(playerStore, codeStore)
+	svc := kingshot.NewService(playerStore, codeStore)
 
 	discord.Register(session, svc, firestore.NewAllianceStore(client))
 
 	commands := discord.GiftCodeCommands()
-	commandNames := commandNameSet(commands)
 
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		logger.Log("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
@@ -70,15 +70,8 @@ func main() {
 		reconcileGlobalCommands(
 			logger,
 			commands,
-			commandNames,
-			func() ([]*discordgo.ApplicationCommand, error) {
-				return s.ApplicationCommands(s.State.User.ID, "")
-			},
-			func(id, _ string) error {
-				return s.ApplicationCommandDelete(s.State.User.ID, "", id)
-			},
-			func(cmd *discordgo.ApplicationCommand) error {
-				_, err := s.ApplicationCommandCreate(s.State.User.ID, "", cmd)
+			func(commands []*discordgo.ApplicationCommand) error {
+				_, err := s.ApplicationCommandBulkOverwrite(s.State.User.ID, "", commands)
 				return err
 			},
 		)
@@ -102,6 +95,16 @@ type logger struct {
 	*slog.Logger
 }
 
+func validateConfig(token, firestoreProject string) error {
+	if token == "" {
+		return fmt.Errorf("bot_token is required")
+	}
+	if firestoreProject == "" {
+		return fmt.Errorf("firestore_project_id is required")
+	}
+	return nil
+}
+
 func (l logger) Log(msg string, keyvals ...any) error {
 	l.Logger.Info(msg, keyvals...)
 	return nil
@@ -119,47 +122,17 @@ func parseActiveCodes(codes string) []string {
 	return active
 }
 
-func commandNameSet(commands []*discordgo.ApplicationCommand) map[string]struct{} {
-	names := make(map[string]struct{}, len(commands))
-	for _, cmd := range commands {
-		names[cmd.Name] = struct{}{}
-	}
-	return names
-}
-
 func reconcileGlobalCommands(
 	logger logger,
 	commands []*discordgo.ApplicationCommand,
-	commandNames map[string]struct{},
-	fetch func() ([]*discordgo.ApplicationCommand, error),
-	deleteCommand func(id, name string) error,
-	createCommand func(*discordgo.ApplicationCommand) error,
+	overwrite func([]*discordgo.ApplicationCommand) error,
 ) {
-	for _, cmd := range commands {
-		logger.Log("creating command", "command", cmd.Name)
-		if err := createCommand(cmd); err != nil {
-			logger.Log("cannot create command", "command", cmd.Name, "error", err)
-		} else {
-			logger.Log("created command", "command", cmd.Name)
-		}
-	}
-
-	existing, err := fetch()
-	if err != nil {
-		logger.Log("could not fetch existing global commands for cleanup", "error", err)
+	logger.Log("reconciling global commands", "count", len(commands))
+	if err := overwrite(commands); err != nil {
+		logger.Log("could not reconcile global commands", "error", err)
 		return
 	}
-
-	for _, cmd := range existing {
-		if _, ok := commandNames[cmd.Name]; !ok {
-			logger.Log("deleting stale command", "command", cmd.Name, "id", cmd.ID)
-			if err := deleteCommand(cmd.ID, cmd.Name); err != nil {
-				logger.Log("cannot delete stale command", "command", cmd.Name, "error", err)
-			} else {
-				logger.Log("deleted stale command", "command", cmd.Name, "id", cmd.ID)
-			}
-		}
-	}
+	logger.Log("reconciled global commands", "count", len(commands))
 }
 
 func dotEnvParser(r io.Reader, set func(name, value string) error) error {

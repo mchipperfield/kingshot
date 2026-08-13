@@ -118,6 +118,32 @@ func (e *errStore) UpdatePlayerKingdom(context.Context, TransferPlayerRequest) e
 }
 func (e *errStore) UnlinkPlayer(context.Context, UnlinkPlayerRequest) error { return e.err }
 
+type testCodeStore struct {
+	code      *Code
+	found     bool
+	findErr   error
+	addErr    error
+	active    []string
+	activeErr error
+	removeErr error
+}
+
+func (s *testCodeStore) Find(context.Context, string) (*Code, bool, error) {
+	return s.code, s.found, s.findErr
+}
+
+func (s *testCodeStore) Add(context.Context, Code) error {
+	return s.addErr
+}
+
+func (s *testCodeStore) ActiveCodes(context.Context) ([]string, error) {
+	return s.active, s.activeErr
+}
+
+func (s *testCodeStore) RemoveActive(context.Context, ...string) error {
+	return s.removeErr
+}
+
 // mockKingShotAPI starts an httptest server for /gift_code (redeem),
 // and returns a GiftCodeService wired to it.
 func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
@@ -352,6 +378,31 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		}
 	})
 
+	t.Run("code lookup error", func(t *testing.T) {
+		svc := &GiftCodeService{
+			codeStore: &testCodeStore{findErr: errors.New("code lookup failed")},
+			store:     newMapStore(nil),
+		}
+		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result.StoreError == nil {
+			t.Error("expected StoreError to be set")
+		}
+	})
+
+	t.Run("code add error", func(t *testing.T) {
+		svc := &GiftCodeService{
+			codeStore: &testCodeStore{addErr: errors.New("code add failed")},
+			store:     newMapStore(nil),
+		}
+		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result.StoreError == nil {
+			t.Error("expected StoreError to be set")
+		}
+		if result.Added {
+			t.Error("expected failed code add not to report success")
+		}
+	})
+
 	t.Run("no registered players adds code to active list", func(t *testing.T) {
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: newMapStore(nil)}
 		result := svc.ProcessNewCode(t.Context(), "FRESHCODE")
@@ -361,11 +412,60 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		if len(result.PlayerResults) != 0 {
 			t.Errorf("expected empty PlayerResults, got %v", result.PlayerResults)
 		}
-		c, found := svc.codeStore.Find(t.Context(), "FRESHCODE")
+		c, found, _ := svc.codeStore.Find(t.Context(), "FRESHCODE")
 		if !found || c.IsExpired() {
 			t.Error("expected FRESHCODE to be in active codes")
 		}
 	})
+}
+
+func TestGiftCodeService_RegisterPlayerCodeStoreErrors(t *testing.T) {
+	t.Run("active code lookup error", func(t *testing.T) {
+		svc := &GiftCodeService{
+			codeStore: &testCodeStore{activeErr: errors.New("active code lookup failed")},
+			store:     newMapStore(nil),
+		}
+		result := svc.RegisterPlayer(t.Context(), NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"})
+		if result.StoreError == nil {
+			t.Error("expected StoreError to be set")
+		}
+	})
+
+	t.Run("remove active code error", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeExpired)
+		svc.codeStore = &testCodeStore{
+			active:    []string{"EXPIRED"},
+			removeErr: errors.New("remove active code failed"),
+		}
+		result := svc.RegisterPlayer(t.Context(), NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"})
+		if result.StoreError == nil {
+			t.Error("expected StoreError to be set")
+		}
+	})
+}
+
+func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &GiftCodeService{
+		codeStore: newInMemoryCodeStore(),
+		store: newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+		}),
+		redeemURL: srv.URL + "/gift_code",
+		client:    srv.Client(),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	result := svc.ProcessNewCode(ctx, "CODE")
+	if result.APIError == nil || !errors.Is(result.APIError, context.Canceled) {
+		t.Fatalf("expected caller cancellation, got %+v", result)
+	}
 }
 
 // TestGiftCodeService_RegisterPlayer tests the player registration logic.
@@ -650,7 +750,7 @@ func TestGiftCodeService_codeStoreLookup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.code, func(t *testing.T) {
-			c, found := cs.Find(t.Context(), tt.code)
+			c, found, _ := cs.Find(t.Context(), tt.code)
 			if found != tt.wantFound {
 				t.Errorf("found = %v, want %v", found, tt.wantFound)
 			}
@@ -718,12 +818,12 @@ func TestInMemoryCodeStore_AddAndCheck(t *testing.T) {
 	ctx := t.Context()
 	s := newInMemoryCodeStore()
 
-	if _, found := s.Find(ctx, "CODE1"); found {
+	if _, found, _ := s.Find(ctx, "CODE1"); found {
 		t.Error("expected CODE1 to be unknown initially")
 	}
 
 	s.Add(ctx, Code{Value: "CODE1"})
-	c, found := s.Find(ctx, "CODE1")
+	c, found, _ := s.Find(ctx, "CODE1")
 	if !found {
 		t.Fatal("expected CODE1 to be found after Add")
 	}
@@ -735,7 +835,7 @@ func TestInMemoryCodeStore_AddAndCheck(t *testing.T) {
 	}
 
 	s.Add(ctx, Code{Value: "CODE2", ExpiredAt: time.Now()})
-	c2, found := s.Find(ctx, "CODE2")
+	c2, found, _ := s.Find(ctx, "CODE2")
 	if !found {
 		t.Fatal("expected CODE2 to be found after Add")
 	}
@@ -749,12 +849,12 @@ func TestInMemoryCodeStore_Seed(t *testing.T) {
 	ctx := t.Context()
 	s := newInMemoryCodeStore("A", "B", "C")
 	for _, code := range []string{"A", "B", "C"} {
-		c, found := s.Find(ctx, code)
+		c, found, _ := s.Find(ctx, code)
 		if !found || c.IsExpired() {
 			t.Errorf("expected seeded code %q to be active", code)
 		}
 	}
-	if _, found := s.Find(ctx, "D"); found {
+	if _, found, _ := s.Find(ctx, "D"); found {
 		t.Error("expected unseeded code D to be unknown")
 	}
 }
@@ -766,7 +866,7 @@ func TestInMemoryCodeStore_DuplicateAddIsNoOp(t *testing.T) {
 	s := newInMemoryCodeStore()
 	s.Add(ctx, Code{Value: "DUP"})
 	s.Add(ctx, Code{Value: "DUP"})
-	codes := s.ActiveCodes(ctx)
+	codes, _ := s.ActiveCodes(ctx)
 	count := 0
 	for _, c := range codes {
 		if c == "DUP" {
@@ -779,7 +879,7 @@ func TestInMemoryCodeStore_DuplicateAddIsNoOp(t *testing.T) {
 
 	s.Add(ctx, Code{Value: "EXP", ExpiredAt: time.Now()})
 	s.Add(ctx, Code{Value: "EXP", ExpiredAt: time.Now()})
-	c, found := s.Find(ctx, "EXP")
+	c, found, _ := s.Find(ctx, "EXP")
 	if !found || !c.IsExpired() {
 		t.Error("expected EXP to be expired after duplicate Add with ExpiredAt set")
 	}
@@ -792,16 +892,16 @@ func TestInMemoryCodeStore_RemoveActive(t *testing.T) {
 	s := newInMemoryCodeStore("A", "B", "C")
 
 	s.RemoveActive(ctx, "A", "C", "NOTPRESENT")
-	if _, found := s.Find(ctx, "A"); found {
+	if _, found, _ := s.Find(ctx, "A"); found {
 		t.Error("expected A to be removed")
 	}
-	if _, found := s.Find(ctx, "C"); found {
+	if _, found, _ := s.Find(ctx, "C"); found {
 		t.Error("expected C to be removed")
 	}
-	if b, found := s.Find(ctx, "B"); !found || b.IsExpired() {
+	if b, found, _ := s.Find(ctx, "B"); !found || b.IsExpired() {
 		t.Error("expected B to remain active")
 	}
-	codes := s.ActiveCodes(ctx)
+	codes, _ := s.ActiveCodes(ctx)
 	if len(codes) != 1 || codes[0] != "B" {
 		t.Errorf("expected ActiveCodes=[B], got %v", codes)
 	}
@@ -812,8 +912,9 @@ func TestInMemoryCodeStore_RemoveActive(t *testing.T) {
 func TestInMemoryCodeStore_ActiveCodesEmpty(t *testing.T) {
 	ctx := t.Context()
 	s := newInMemoryCodeStore()
-	if len(s.ActiveCodes(ctx)) != 0 {
-		t.Errorf("expected empty ActiveCodes, got %v", s.ActiveCodes(ctx))
+	codes, _ := s.ActiveCodes(ctx)
+	if len(codes) != 0 {
+		t.Errorf("expected empty ActiveCodes, got %v", codes)
 	}
 }
 

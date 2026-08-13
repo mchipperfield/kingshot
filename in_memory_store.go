@@ -21,29 +21,31 @@ func newInMemoryCodeStore(activeCodes ...string) *inMemoryCodeStore {
 	return s
 }
 
-func (s *inMemoryCodeStore) Find(_ context.Context, code string) (*Code, bool) {
+func (s *inMemoryCodeStore) Find(_ context.Context, code string) (*Code, bool, error) {
 	c, ok := s.codes[code]
-	return &c, ok
+	return &c, ok, nil
 }
 
-func (s *inMemoryCodeStore) Add(_ context.Context, code Code) {
+func (s *inMemoryCodeStore) Add(_ context.Context, code Code) error {
 	s.codes[code.Value] = code
+	return nil
 }
 
-func (s *inMemoryCodeStore) ActiveCodes(_ context.Context) []string {
+func (s *inMemoryCodeStore) ActiveCodes(_ context.Context) ([]string, error) {
 	codes := make([]string, 0, len(s.codes))
 	for _, c := range s.codes {
 		if !c.IsExpired() {
 			codes = append(codes, c.Value)
 		}
 	}
-	return codes
+	return codes, nil
 }
 
-func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) {
+func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) error {
 	for _, v := range codes {
 		delete(s.codes, v)
 	}
+	return nil
 }
 
 type inMemoryAllianceStore struct {

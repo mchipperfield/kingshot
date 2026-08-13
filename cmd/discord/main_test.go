@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
-	"sort"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -23,99 +22,67 @@ func TestParseActiveCodes(t *testing.T) {
 	}
 }
 
-func TestCommandNameSet(t *testing.T) {
+func TestValidateConfig(t *testing.T) {
 	t.Parallel()
 
-	commands := discord.GiftCodeCommands()
-	names := commandNameSet(commands)
+	tests := []struct {
+		name             string
+		token            string
+		firestoreProject string
+		wantErr          string
+	}{
+		{name: "missing bot token", firestoreProject: "project", wantErr: "bot_token is required"},
+		{name: "missing Firestore project", token: "token", wantErr: "firestore_project_id is required"},
+		{name: "valid", token: "token", firestoreProject: "project"},
+	}
 
-	if _, ok := names["player"]; !ok {
-		t.Fatalf("expected player command in set")
-	}
-	if _, ok := names["code"]; !ok {
-		t.Fatalf("expected code command in set")
-	}
-	if len(names) != 2 {
-		t.Fatalf("expected 2 command names, got %d", len(names))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(tt.token, tt.firestoreProject)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateConfig() error = %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("validateConfig() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
 func TestReconcileGlobalCommands(t *testing.T) {
 	t.Parallel()
 
-	var created []string
-	var deleted []string
+	var overwritten []*discordgo.ApplicationCommand
 
 	commands := discord.GiftCodeCommands() // "player", "code"
-	commandNames := commandNameSet(commands)
 
 	reconcileGlobalCommands(
 		logger{slog.New(slog.NewTextHandler(io.Discard, nil))},
 		commands,
-		commandNames,
-		func() ([]*discordgo.ApplicationCommand, error) {
-			// Existing commands on discord
-			return []*discordgo.ApplicationCommand{
-				{ID: "1", Name: "player"},        // Will be updated by create
-				{ID: "2", Name: "stale-command"}, // Should be deleted
-			}, nil
-		},
-		func(id, name string) error {
-			deleted = append(deleted, name)
-			return nil
-		},
-		func(cmd *discordgo.ApplicationCommand) error {
-			created = append(created, cmd.Name)
+		func(commands []*discordgo.ApplicationCommand) error {
+			overwritten = commands
 			return nil
 		},
 	)
 
-	// Check created
-	sort.Strings(created)
-	if !reflect.DeepEqual(created, []string{"code", "player"}) {
-		t.Errorf("created commands = %v, want [code player]", created)
-	}
-
-	// Check deleted
-	if !reflect.DeepEqual(deleted, []string{"stale-command"}) {
-		t.Errorf("deleted commands = %v, want [stale-command]", deleted)
+	if !reflect.DeepEqual(overwritten, commands) {
+		t.Errorf("overwritten commands = %v, want %v", overwritten, commands)
 	}
 }
 
-func TestReconcileGlobalCommands_FetchFails(t *testing.T) {
+func TestReconcileGlobalCommands_OverwriteFails(t *testing.T) {
 	t.Parallel()
 
-	var created []string
-	var deleted []string
-
 	commands := discord.GiftCodeCommands()
-	commandNames := commandNameSet(commands)
 
 	reconcileGlobalCommands(
 		logger{slog.New(slog.NewTextHandler(io.Discard, nil))},
 		commands,
-		commandNames,
-		func() ([]*discordgo.ApplicationCommand, error) {
-			return nil, errors.New("fetch failed")
-		},
-		func(id, name string) error {
-			deleted = append(deleted, name)
-			return nil
-		},
-		func(cmd *discordgo.ApplicationCommand) error {
-			created = append(created, cmd.Name)
-			return nil
+		func(commands []*discordgo.ApplicationCommand) error {
+			return errors.New("overwrite failed")
 		},
 	)
-
-	// Check created
-	sort.Strings(created)
-	if !reflect.DeepEqual(created, []string{"code", "player"}) {
-		t.Errorf("created commands = %v, want [code player]", created)
-	}
-
-	// Check deleted
-	if len(deleted) != 0 {
-		t.Errorf("deleted commands = %v, want []", deleted)
-	}
 }

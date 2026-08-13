@@ -28,7 +28,7 @@ func main() {
 		port                  = fs.Int("listen_address", 8080, "HTTP server listen address")
 		discord_client_id     = fs.String("discord_client_id", "", "Discord OAuth2 client ID")
 		discord_client_secret = fs.String("discord_client_secret", "", "Discord OAuth2 client secret")
-		discord_redirect_uri  = fs.String("discord_redirect_uri", "http://localhost:3000/oauth/discord/callback", "Discord OAuth2 redirect URI")
+		discord_redirect_uri  = fs.String("discord_redirect_uri", "https://kingshot-8539b.ew.r.appspot.com/oauth/discord/callback", "Discord OAuth2 redirect URI")
 		signing_key           = fs.String("signing_key", "", "Signing key for session cookies")
 		firestore_project_id  = fs.String("firestore_project_id", "", "Google Cloud Firestore project ID")
 	)
@@ -37,6 +37,7 @@ func main() {
 		os.Args[1:],
 		ff.WithEnvVarNoPrefix(),
 		ff.WithConfigFile(".env"),
+		ff.WithAllowMissingConfigFile(true),
 		ff.WithConfigFileParser(dotEnvParser)); err != nil {
 		slog.Error("failed to parse flags", "error", err)
 		os.Exit(1)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -29,7 +30,10 @@ const (
 	ErrCodeNotFound     = "40014"
 	ErrCodeLogin        = "40009"
 	ErrCodeLimitReached = "40005"
+	ErrCodeTimeoutRetry = "40004"
 )
+
+const maxRedeemAttempts = 3
 
 // transport is a rate-limited http.RoundTripper.
 type transport struct {
@@ -85,6 +89,22 @@ func (s *GiftCodeService) redeemGiftCode(ctx context.Context, playerID, kingdomI
 	if err != nil {
 		return nil, err
 	}
+
+	for attempt := 1; attempt <= maxRedeemAttempts; attempt++ {
+		redeemResp, err := s.redeemRequest(ctx, payload)
+		if err != nil {
+			return nil, err
+		}
+		if redeemResp.ErrCode != ErrCodeTimeoutRetry || attempt == maxRedeemAttempts {
+			return redeemResp, nil
+		}
+		slog.Info("retrying KingShot redemption after timeout response", "attempt", attempt+1, "player_id", playerID, "code", cdk)
+	}
+
+	return nil, fmt.Errorf("redemption attempts exhausted")
+}
+
+func (s *GiftCodeService) redeemRequest(ctx context.Context, payload string) (*RedeemResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.redeemURL, strings.NewReader(payload))
 	if err != nil {
 		return nil, err

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -807,6 +808,45 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
 		if got != "Error redeeming code." {
 			t.Errorf("got %q, want %q", got, "Error redeeming code.")
+		}
+	})
+
+	t.Run("retries timeout response", func(t *testing.T) {
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requests.Add(1) < 3 {
+				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+				return
+			}
+			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
+		if got != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", got)
+		}
+		if gotRequests := requests.Load(); gotRequests != 3 {
+			t.Fatalf("got %d requests, want 3", gotRequests)
+		}
+	})
+
+	t.Run("stops after maximum timeout retries", func(t *testing.T) {
+		var requests atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
+		if got != "Failed to redeem code." {
+			t.Fatalf("got %q, want exhausted retry result", got)
+		}
+		if gotRequests := requests.Load(); gotRequests != maxRedeemAttempts {
+			t.Fatalf("got %d requests, want %d", gotRequests, maxRedeemAttempts)
 		}
 	})
 }

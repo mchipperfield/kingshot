@@ -180,21 +180,29 @@ func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.Al
 	}
 }
 
+func deferInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, responseType discordgo.InteractionResponseType, operation string) bool {
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: responseType}); err != nil {
+		slog.Error("failed to defer interaction response", "operation", operation, "error", err)
+		return false
+	}
+	return true
+}
+
+func serviceContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), serviceCallTimeout)
+}
+
 func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 || len(options[0].Options) < 2 {
 		slog.Error("received malformed player register interaction")
 		return
 	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
-		slog.Error("failed to defer interaction response for register", "error", err)
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "register") {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := serviceContext()
 	defer cancel()
 
 	options = options[0].Options
@@ -225,18 +233,14 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 		slog.Error("received malformed code redeem interaction")
 		return
 	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
-		slog.Error("failed to defer interaction response for code", "error", err)
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code redeem") {
 		return
 	}
 
 	newCode := options[0].Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := serviceContext()
 	defer cancel()
 
 	result := svc.ProcessNewCode(ctx, newCode)
@@ -253,15 +257,11 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 }
 
 func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
-		slog.Error("failed to defer interaction response for status", "error", err)
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "player status") {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := serviceContext()
 	defer cancel()
 
 	players, err := svc.GetPlayersByUser(ctx, i.Member.User.ID)
@@ -291,15 +291,11 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		slog.Error("received malformed player transfer interaction")
 		return
 	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
-		slog.Error("failed to defer interaction response for transfer", "error", err)
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "player transfer") {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := serviceContext()
 	defer cancel()
 
 	options = options[0].Options
@@ -392,15 +388,11 @@ func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredMessageUpdate,
-	})
-	if err != nil {
-		slog.Error("failed to defer interaction response for unlink confirmation", "error", err)
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredMessageUpdate, "unlink confirmation") {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := serviceContext()
 	defer cancel()
 
 	req := kingshot.UnlinkPlayerRequest{
@@ -518,14 +510,10 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		slog.Error("received malformed code channel interaction")
 		return
 	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
-		slog.Error("failed to defer interaction response for set channel", "error", err)
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code channel") {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := serviceContext()
 	defer cancel()
 
 	if store == nil {

@@ -444,6 +444,30 @@ func TestGiftCodeService_RegisterPlayerCodeStoreErrors(t *testing.T) {
 	})
 }
 
+func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := &GiftCodeService{
+		codeStore: newInMemoryCodeStore(),
+		store: newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+		}),
+		redeemURL: srv.URL + "/gift_code",
+		client:    srv.Client(),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	result := svc.ProcessNewCode(ctx, "CODE")
+	if result.APIError == nil || !errors.Is(result.APIError, context.Canceled) {
+		t.Fatalf("expected caller cancellation, got %+v", result)
+	}
+}
+
 // TestGiftCodeService_RegisterPlayer tests the player registration logic.
 func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 	t.Run("new player", func(t *testing.T) {

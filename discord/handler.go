@@ -217,9 +217,12 @@ func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *ki
 	newCode := i.ApplicationCommandData().Options[0].Options[0].StringValue()
 	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	result := svc.ProcessNewCode(context.Background(), newCode)
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+
+	result := svc.ProcessNewCode(ctx, newCode)
 	if result.Added && len(result.PlayerResults) > 0 {
-		posted := postGuildRedemptionResults(s, allianceStore, result.Code, result.PlayerResults)
+		posted := postGuildRedemptionResults(ctx, s, allianceStore, result.Code, result.PlayerResults)
 		reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))
 		return
 	}
@@ -381,7 +384,7 @@ func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCrea
 	respondFinal(s, i, formatUnlinkResult(result))
 }
 
-func postGuildRedemptionResults(s *discordgo.Session, store kingshot.AllianceStore, code string, results []kingshot.PlayerRedeemResult) []string {
+func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store kingshot.AllianceStore, code string, results []kingshot.PlayerRedeemResult) []string {
 	grouped := make(map[string][]kingshot.PlayerRedeemResult)
 	for _, result := range results {
 		grouped[result.GuildID] = append(grouped[result.GuildID], result)
@@ -397,7 +400,7 @@ func postGuildRedemptionResults(s *discordgo.Session, store kingshot.AllianceSto
 	for _, guildID := range guildIDs {
 		guildResults := grouped[guildID]
 		var channelID string
-		channelID, err := store.GetRedemptionChannel(context.Background(), guildID)
+		channelID, err := store.GetRedemptionChannel(ctx, guildID)
 		if err != nil {
 			slog.Error("failed to get redemption channel, falling back to default channel", "error", err, "guild_id", guildID, "code", code)
 			channelID, err = guildFindDefaultChannel(s, guildID)
@@ -453,6 +456,8 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		slog.Error("failed to defer interaction response for set channel", "error", err)
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
 
 	if store == nil {
 		reply(s, i, "Unable to set redemption channel due to a database error.")
@@ -486,7 +491,7 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		ChannelId: channel.ID,
 	}
 
-	if err := store.SetRedemptionChannel(context.Background(), &req); err != nil {
+	if err := store.SetRedemptionChannel(ctx, &req); err != nil {
 		slog.Error("failed to set redemption channel", "error", err, "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
 		reply(s, i, "Failed to set redemption channel.")
 		return

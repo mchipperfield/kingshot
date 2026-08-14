@@ -1,12 +1,16 @@
 package discord
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/bwmarrin/discordgo"
+	"github.com/mchipperfield/kingshot"
+)
 
 type BearHandler struct {
+	svc *kingshot.BearService
 }
 
-func NewBearHandler() *BearHandler {
-	return &BearHandler{}
+func NewBearHandler(svc *kingshot.BearService) *BearHandler {
+	return &BearHandler{svc: svc}
 }
 
 func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {

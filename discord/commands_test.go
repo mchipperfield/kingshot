@@ -8,7 +8,7 @@ import (
 
 func TestCommandRegistryStoresCommandSources(t *testing.T) {
 	giftCodeHandler := NewGiftCodeHandler(nil, nil)
-	bearHandler := NewBearHandler()
+	bearHandler := NewBearHandler(nil)
 	registry := NewCommandRegistry(giftCodeHandler, bearHandler)
 
 	if len(registry.sources) != 2 {
@@ -23,7 +23,7 @@ func TestCommandRegistryStoresCommandSources(t *testing.T) {
 }
 
 func TestBearCommands(t *testing.T) {
-	commands := NewBearHandler().Commands()
+	commands := NewBearHandler(nil).Commands()
 	if len(commands) != 1 {
 		t.Fatalf("got %d bear commands, want 1", len(commands))
 	}

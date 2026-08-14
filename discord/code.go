@@ -24,16 +24,24 @@ const serviceCallTimeout = 10 * time.Second
 // service deliberately rate-limits each external API request.
 const codeProcessingTimeout = 15 * time.Minute
 
-// RegisterGiftCodeHandler adds the KingShot interaction handler to s and
-// contributes its application commands to the shared registry.
-func RegisterGiftCodeHandler(s *discordgo.Session, registry *CommandRegistry, svc *kingshot.GiftCodeService, store kingshot.AllianceStore) {
-	s.AddHandler(InteractionHandler(svc, store))
-	registry.Add(GiftCodeCommands()...)
+// GiftCodeHandler handles interaction requests for /player and /code commands.
+// It's Handle method returns a handler that dispatches commands and button clicks to the appropriate sub-handlers,
+// similar to an http.ServeHTTP() handler. Register this once at startup via session.AddHandler.
+type GiftCodeHandler struct {
+	service *kingshot.GiftCodeService
+	store   kingshot.AllianceStore
 }
 
-// GiftCodeCommands returns the slash command definitions for the KingShot gift
-// code system. Register these once in the Ready handler.
-func GiftCodeCommands() []*discordgo.ApplicationCommand {
+// NewGiftCodeHandler creates a new GiftCodeHandler with the provided service and store.
+func NewGiftCodeHandler(svc *kingshot.GiftCodeService, store kingshot.AllianceStore) *GiftCodeHandler {
+	return &GiftCodeHandler{
+		service: svc,
+		store:   store,
+	}
+}
+
+// Commands returns the application commands that this handler contributes to the registry.
+func (h *GiftCodeHandler) Commands() []*discordgo.ApplicationCommand {
 	return []*discordgo.ApplicationCommand{
 		{
 			Name:        "player",
@@ -139,51 +147,45 @@ func GiftCodeCommands() []*discordgo.ApplicationCommand {
 	}
 }
 
-func permPointer(p int64) *int64 {
-	return &p
-}
-
-// InteractionHandler returns a handler that dispatches /player and /code
+// Handle returns a handler that dispatches /player and /code
 // commands, and the unlink confirmation button clicks they can trigger.
 // Register this once at startup via session.AddHandler.
-func InteractionHandler(svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		if i == nil || i.Interaction == nil {
-			slog.Error("received nil Discord interaction")
+func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i == nil || i.Interaction == nil {
+		slog.Error("received nil Discord interaction")
+		return
+	}
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
+		data := i.ApplicationCommandData()
+		if len(data.Options) == 0 {
+			slog.Error("received application command without options", "command", data.Name)
 			return
 		}
-		switch i.Type {
-		case discordgo.InteractionApplicationCommand:
-			data := i.ApplicationCommandData()
-			if len(data.Options) == 0 {
-				slog.Error("received application command without options", "command", data.Name)
-				return
+		switch data.Name {
+		case "player":
+			subcommand := data.Options[0].Name
+			switch subcommand {
+			case "register":
+				handleRegisterPlayer(s, i, h.service)
+			case "status":
+				handlePlayerStatus(s, i, h.service)
+			case "transfer":
+				handleTransferPlayer(s, i, h.service)
+			case "unlink":
+				handleUnlinkPlayer(s, i)
 			}
-			switch data.Name {
-			case "player":
-				subcommand := data.Options[0].Name
-				switch subcommand {
-				case "register":
-					handleRegisterPlayer(s, i, svc)
-				case "status":
-					handlePlayerStatus(s, i, svc)
-				case "transfer":
-					handleTransferPlayer(s, i, svc)
-				case "unlink":
-					handleUnlinkPlayer(s, i)
-				}
-			case "code":
-				subcommand := data.Options[0].Name
-				switch subcommand {
-				case "redeem":
-					handleAddCode(s, i, svc, allianceStore)
-				case "channel":
-					handleSetRedemptionChannel(s, i, allianceStore)
-				}
+		case "code":
+			subcommand := data.Options[0].Name
+			switch subcommand {
+			case "redeem":
+				handleAddCode(s, i, h.service, h.store)
+			case "channel":
+				handleSetRedemptionChannel(s, i, h.store)
 			}
-		case discordgo.InteractionMessageComponent:
-			handleUnlinkConfirmation(s, i, svc)
 		}
+	case discordgo.InteractionMessageComponent:
+		handleUnlinkConfirmation(s, i, h.service)
 	}
 }
 
@@ -569,4 +571,7 @@ func botHasPermission(s *discordgo.Session, channelID string) bool {
 	}
 
 	return permissions&(discordgo.PermissionSendMessages|discordgo.PermissionViewChannel) == (discordgo.PermissionSendMessages | discordgo.PermissionViewChannel)
+}
+func permPointer(p int64) *int64 {
+	return &p
 }

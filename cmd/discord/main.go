@@ -58,12 +58,16 @@ func main() {
 
 	playerStore := firestore.NewPlayerStore(client)
 	codeStore := firestore.NewCodeStore(client)
+
 	svc := kingshot.NewService(playerStore, codeStore)
 
-	commandRegistry := discord.NewCommandRegistry(session)
-	discord.RegisterGiftCodeHandler(session, commandRegistry, svc, firestore.NewAllianceStore(client))
-	discord.NewBearHandler().Register(session, commandRegistry)
-	commandRegistry.RegisterOnReady()
+	giftCodeHandler := discord.NewGiftCodeHandler(svc, firestore.NewAllianceStore(client))
+	bearHandler := discord.NewBearHandler()
+	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler)
+
+	session.AddHandler(giftCodeHandler.Handle)
+	session.AddHandler(bearHandler.Handle)
+	session.AddHandler(commandRegistry.HandleReady)
 
 	if err := session.Open(); err != nil {
 		logger.Log("error opening websocket", "error", err)

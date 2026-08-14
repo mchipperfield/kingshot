@@ -12,7 +12,7 @@ import (
 // TestGiftCodeCommands verifies that the command list contains exactly the
 // /player and /code commands.
 func TestGiftCodeCommands(t *testing.T) {
-	cmds := GiftCodeCommands()
+	cmds := NewGiftCodeHandler(nil, nil).Commands()
 
 	if len(cmds) != 2 {
 		t.Fatalf("expected 2 commands, got %d", len(cmds))
@@ -46,8 +46,8 @@ func TestGiftCodeCommands(t *testing.T) {
 // unrecognised custom ID.
 func TestInteractionHandler_IgnoresNonAppCommand(t *testing.T) {
 	// svc is never dereferenced for an unrecognised custom ID.
-	h := InteractionHandler(nil, nil)
-	h(nil, &discordgo.InteractionCreate{
+	h := NewGiftCodeHandler(nil, nil)
+	h.Handle(nil, &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionMessageComponent,
 			Data: discordgo.MessageComponentInteractionData{
@@ -61,8 +61,8 @@ func TestInteractionHandler_IgnoresNonAppCommand(t *testing.T) {
 // handler silently ignores unrecognised slash command names.
 func TestInteractionHandler_IgnoresUnknownCommand(t *testing.T) {
 	// svc is never dereferenced for unknown command names.
-	h := InteractionHandler(nil, nil)
-	h(nil, &discordgo.InteractionCreate{
+	h := NewGiftCodeHandler(nil, nil)
+	h.Handle(nil, &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionApplicationCommand,
 			Data: discordgo.ApplicationCommandInteractionData{
@@ -84,9 +84,9 @@ func TestInteractionHandler_IgnoresMalformedCommands(t *testing.T) {
 		{Name: "code", Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "channel"}}},
 	}
 
-	h := InteractionHandler(nil, nil)
+	h := NewGiftCodeHandler(nil, nil)
 	for _, data := range tests {
-		h(nil, &discordgo.InteractionCreate{
+		h.Handle(nil, &discordgo.InteractionCreate{
 			Interaction: &discordgo.Interaction{
 				Type: discordgo.InteractionApplicationCommand,
 				Data: data,

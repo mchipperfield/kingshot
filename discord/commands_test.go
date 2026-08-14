@@ -6,19 +6,19 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-func TestCommandRegistryCollectsHandlerCommands(t *testing.T) {
-	registry := NewCommandRegistry(nil)
-	giftCommands := GiftCodeCommands()
-	bearCommands := NewBearHandler().Commands()
+func TestCommandRegistryStoresCommandSources(t *testing.T) {
+	giftCodeHandler := NewGiftCodeHandler(nil, nil)
+	bearHandler := NewBearHandler()
+	registry := NewCommandRegistry(giftCodeHandler, bearHandler)
 
-	registry.Add(giftCommands...)
-	registry.Add(bearCommands...)
-
-	if len(registry.commands) != len(giftCommands)+len(bearCommands) {
-		t.Fatalf("collected %d commands, want %d", len(registry.commands), len(giftCommands)+len(bearCommands))
+	if len(registry.sources) != 2 {
+		t.Fatalf("stored %d sources, want 2", len(registry.sources))
 	}
-	if registry.commands[len(registry.commands)-1].Name != "bear" {
-		t.Fatalf("last command = %q, want bear", registry.commands[len(registry.commands)-1].Name)
+	if registry.sources[0] != giftCodeHandler {
+		t.Fatalf("first source = %T, want GiftCodeHandler", registry.sources[0])
+	}
+	if registry.sources[1] != bearHandler {
+		t.Fatalf("second source = %T, want BearHandler", registry.sources[1])
 	}
 }
 

@@ -3,6 +3,7 @@ package kingshot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -15,7 +16,7 @@ func NewBearService(store BearStore) *BearService {
 }
 
 type BearStatus struct {
-	Bear  int
+	Bear  string
 	SetAt time.Time
 	SetBy string
 	Next  time.Time
@@ -25,7 +26,7 @@ func (s *BearService) GetBearStatus(ctx context.Context, guildId, bearID string)
 	switch bearID {
 	case "1":
 		return &BearStatus{
-			Bear:  1,
+			Bear:  "1",
 			SetAt: time.Now().Add(-1 * time.Hour),
 			SetBy: "359734862141194251",
 			Next:  time.Now().Add(1 * time.Hour),
@@ -33,7 +34,7 @@ func (s *BearService) GetBearStatus(ctx context.Context, guildId, bearID string)
 	case "2":
 		return &BearStatus{
 
-			Bear:  2,
+			Bear:  "2",
 			SetAt: time.Now().Add(-1 * time.Hour),
 			SetBy: "359734862141194251",
 			Next:  time.Now().Add(1 * time.Hour),
@@ -51,9 +52,9 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	if bearID != "1" && bearID != "2" {
 		return errors.New("invalid bear trap")
 	}
-	_, err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
+	err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
 	if err != nil {
-		return err
+		return fmt.Errorf("kingshot: set bear: %w", err)
 	}
 	return nil
 }

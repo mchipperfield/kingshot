@@ -58,24 +58,16 @@ func main() {
 
 	playerStore := firestore.NewPlayerStore(client)
 	codeStore := firestore.NewCodeStore(client)
+
 	svc := kingshot.NewService(playerStore, codeStore)
 
-	discord.Register(session, svc, firestore.NewAllianceStore(client))
+	giftCodeHandler := discord.NewGiftCodeHandler(svc, firestore.NewAllianceStore(client))
+	bearHandler := discord.NewBearHandler(kingshot.NewBearService())
+	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler)
 
-	commands := discord.GiftCodeCommands()
-
-	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		logger.Log("Bot is up!", "user", r.User.String(), "session_id", r.SessionID, "version", r.Version)
-
-		reconcileGlobalCommands(
-			logger,
-			commands,
-			func(commands []*discordgo.ApplicationCommand) error {
-				_, err := s.ApplicationCommandBulkOverwrite(s.State.User.ID, "", commands)
-				return err
-			},
-		)
-	})
+	session.AddHandler(giftCodeHandler.Handle)
+	session.AddHandler(bearHandler.Handle)
+	session.AddHandler(commandRegistry.HandleReady)
 
 	if err := session.Open(); err != nil {
 		logger.Log("error opening websocket", "error", err)
@@ -120,19 +112,6 @@ func parseActiveCodes(codes string) []string {
 		active = append(active, code)
 	}
 	return active
-}
-
-func reconcileGlobalCommands(
-	logger logger,
-	commands []*discordgo.ApplicationCommand,
-	overwrite func([]*discordgo.ApplicationCommand) error,
-) {
-	logger.Log("reconciling global commands", "count", len(commands))
-	if err := overwrite(commands); err != nil {
-		logger.Log("could not reconcile global commands", "error", err)
-		return
-	}
-	logger.Log("reconciled global commands", "count", len(commands))
 }
 
 func dotEnvParser(r io.Reader, set func(name, value string) error) error {

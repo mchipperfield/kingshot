@@ -7,10 +7,11 @@ import (
 )
 
 type BearService struct {
+	store BearStore
 }
 
-func NewBearService() *BearService {
-	return &BearService{}
+func NewBearService(store BearStore) *BearService {
+	return &BearService{store: store}
 }
 
 type BearStatus struct {
@@ -41,4 +42,18 @@ func (s *BearService) GetBearStatus(ctx context.Context, guildId, bearID string)
 		return nil, errors.New("invalid bear trap")
 	}
 
+}
+
+func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string) error {
+	if setTime.Before(time.Now()) {
+		return errors.New("set time cannot be in the past")
+	}
+	if bearID != "1" && bearID != "2" {
+		return errors.New("invalid bear trap")
+	}
+	_, err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
+	if err != nil {
+		return err
+	}
+	return nil
 }

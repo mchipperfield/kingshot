@@ -72,3 +72,8 @@ type SetChannelRequest struct {
 }
 
 var ErrNotFound error = errors.New("not found")
+
+type BearStore interface {
+	GetBearStatus(ctx context.Context, guildId, bearID string) (*BearStatus, error)
+	SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string) (*BearStatus, error)
+}

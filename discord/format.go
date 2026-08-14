@@ -12,6 +12,10 @@ import (
 // discordMaxMessageLen is the safe character limit for a single Discord message.
 const discordMaxMessageLen = 1900
 
+const (
+	thumbnailURL = "https://matthewchipperfield.dev/public/images/gopherize.png"
+)
+
 // formatCodeResult formats a CodeResult as a Discord-ready message string.
 func formatCodeResult(r kingshot.CodeResult) string {
 	switch {
@@ -149,6 +153,14 @@ func reply(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
 	}
 }
 
+func replyWithEmbed(s *discordgo.Session, i *discordgo.InteractionCreate, embed *discordgo.MessageEmbed) {
+	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{embed}})
+	if err != nil {
+		slog.Error("failed to edit interaction response", "error", err)
+	}
+}
+
+// deferInteraction sends a deferred response to the interaction and returns true
 // respondFinal edits the deferred interaction response with msg and strips
 // any components, so a confirmation prompt's buttons can't be reused.
 func respondFinal(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {

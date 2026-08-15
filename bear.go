@@ -69,9 +69,9 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 		SetAt:   time.Now(),
 		Next:    setTime,
 	}
-	s.mu.Lock()
-	s.upsertBearLocked(status)
-	s.mu.Unlock()
+
+	s.upsertBear(status)
+
 	return nil
 }
 
@@ -146,17 +146,13 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			bear.sent = false
 		}
 		if bear.status.Next.Sub(now) < time.Minute*30 && !bear.sent {
-			reminder := Reminder{
+			s.reminderChan <- Reminder{
 				BearID:  bear.status.Bear,
 				GuildID: bear.status.GuildID,
 				Next:    bear.status.Next,
 				Sent:    true,
 			}
-			select {
-			case s.reminderChan <- reminder:
-				bear.sent = true
-			default:
-			}
+			bear.sent = true
 		}
 		s.mu.Unlock()
 	}
@@ -176,13 +172,9 @@ func (s *BearService) loadBears(ctx context.Context) error {
 }
 
 func (s *BearService) upsertBear(status BearStatus) {
+	key := status.GuildID + "/" + status.Bear
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.upsertBearLocked(status)
-}
-
-func (s *BearService) upsertBearLocked(status BearStatus) {
-	key := status.GuildID + "/" + status.Bear
 
 	if existing, found := s.bears[key]; found && existing.status.Next.Equal(status.Next) {
 		existing.status = status

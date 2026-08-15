@@ -10,15 +10,20 @@ import (
 
 type BearService struct {
 	store        BearStore
-	reminders    map[string]*Reminder
+	bears        map[string]*scheduledBear
 	reminderChan chan Reminder
 	mu           sync.Mutex
+}
+
+type scheduledBear struct {
+	status BearStatus
+	sent   bool
 }
 
 func NewBearService(store BearStore) *BearService {
 	return &BearService{
 		store:        store,
-		reminders:    make(map[string]*Reminder),
+		bears:        make(map[string]*scheduledBear),
 		reminderChan: make(chan Reminder, 64),
 		mu:           sync.Mutex{},
 	}
@@ -47,6 +52,13 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	if err != nil {
 		return fmt.Errorf("kingshot: set bear: %w", err)
 	}
+	s.upsertBear(BearStatus{
+		Bear:    bearID,
+		GuildID: guildId,
+		SetBy:   setBy,
+		SetAt:   time.Now(),
+		Next:    setTime,
+	})
 	return nil
 }
 
@@ -70,6 +82,9 @@ func (s *BearService) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-ticker.C:
+				if err := s.loadBears(ctx); err != nil {
+					return fmt.Errorf("kingshot: refresh bears: %w", err)
+				}
 			s.tick(now)
 		}
 	}
@@ -83,32 +98,45 @@ func (s *BearService) tick(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, reminder := range s.reminders {
-		// If reminder.Next is in the past, calculate the next reminder time based on the bearInterval
-		if reminder.Next.Before(now) {
-			steps := int64(now.Sub(reminder.Next)/bearInterval) + 1
-			reminder.Next = reminder.Next.Add(time.Duration(steps) * bearInterval)
-			reminder.Sent = false
+	for _, bear := range s.bears {
+		if bear.status.Next.Before(now) {
+			steps := int64(now.Sub(bear.status.Next)/bearInterval) + 1
+			bear.status.Next = bear.status.Next.Add(time.Duration(steps) * bearInterval)
+			bear.sent = false
 		}
-		// Time until next bear is less than 30 minutes and reminder has not been sent yet, send the reminder
-		if reminder.Next.Sub(now) < time.Minute*30 && !reminder.Sent {
-			reminder.Sent = true
-			s.reminderChan <- *reminder
+		if bear.status.Next.Sub(now) < time.Minute*30 && !bear.sent {
+			bear.sent = true
+			s.reminderChan <- Reminder{
+				BearID:  bear.status.Bear,
+				GuildID: bear.status.GuildID,
+				Next:    bear.status.Next,
+				Sent:    true,
+			}
 		}
 
 	}
 }
 
 func (s *BearService) loadBears(ctx context.Context) error {
-	reminders, err := s.store.GetAllBears(ctx)
+	statuses, err := s.store.GetAllBearStatuses(ctx)
 	if err != nil {
-		return fmt.Errorf("kingshot: get all bears: %w", err)
+		return fmt.Errorf("kingshot: get all bear statuses: %w", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, r := range reminders {
-		s.reminders[r.GuildID+"/"+r.BearID] = r
+	for _, status := range statuses {
+		s.upsertBear(status)
 	}
 	return nil
+}
+
+func (s *BearService) upsertBear(status BearStatus) {
+	key := status.GuildID + "/" + status.Bear
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing, found := s.bears[key]; found && existing.status.Next.Equal(status.Next) {
+		existing.status = status
+		return
+	}
+	s.bears[key] = &scheduledBear{status: status}
 }

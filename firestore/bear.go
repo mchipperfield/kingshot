@@ -7,6 +7,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/mchipperfield/kingshot"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -47,10 +48,11 @@ func (s *BearStore) GetBearStatus(ctx context.Context, guildId string, bearID st
 		return nil, fmt.Errorf("firestore: decode bear doc: %w", err)
 	}
 	return &kingshot.BearStatus{
-		Next:  b.Next,
-		SetBy: b.SetBy,
-		SetAt: b.SetAt,
-		Bear:  b.Bear,
+		Next:    b.Next,
+		SetBy:   b.SetBy,
+		SetAt:   b.SetAt,
+		Bear:    b.Bear,
+		GuildID: b.GuildID,
 	}, nil
 }
 
@@ -93,4 +95,34 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 		return fmt.Errorf("firestore: set bear transaction: %w", err)
 	}
 	return nil
+}
+
+func (s *BearStore) GetAllBearStatuses(ctx context.Context) ([]kingshot.BearStatus, error) {
+	var bears []kingshot.BearStatus
+	iter := s.client.CollectionGroup("bears").Documents(ctx)
+	defer iter.Stop()
+
+	for {
+		docSnap, err := iter.Next()
+		if err != nil {
+			if err == iterator.Done {
+				break
+			}
+			return nil, fmt.Errorf("firestore: iterate bears: %w", err)
+		}
+
+		var b bear
+		if err := docSnap.DataTo(&b); err != nil {
+			return nil, fmt.Errorf("firestore: decode bear doc: %w", err)
+		}
+
+		bears = append(bears, kingshot.BearStatus{
+			Bear:    b.Bear,
+			GuildID: b.GuildID,
+			SetBy:   b.SetBy,
+			SetAt:   b.SetAt,
+			Next:    b.Next,
+		})
+	}
+	return bears, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/mchipperfield/kingshot"
 	"github.com/mchipperfield/kingshot/discord"
 	"github.com/mchipperfield/kingshot/firestore"
+	inmem "github.com/mchipperfield/kingshot/store"
 	"github.com/peterbourgon/ff"
 )
 
@@ -63,7 +64,8 @@ func main() {
 	svc := kingshot.NewService(playerStore, codeStore)
 
 	giftCodeHandler := discord.NewGiftCodeHandler(svc, firestore.NewAllianceStore(client))
-	bearService := kingshot.NewBearService(firestore.NewBearStore(client))
+	bearService := kingshot.NewBearService(inmem.NewBearStore(firestore.NewBearStore(client)))
+
 	bearHandler := discord.NewBearHandler(bearService)
 	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler)
 

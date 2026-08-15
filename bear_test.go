@@ -15,7 +15,7 @@ func newMemoryBearStore() *memoryBearStore {
 }
 
 func (s *memoryBearStore) GetBearStatus(_ context.Context, guildID, bearID string) (*BearStatus, error) {
-	status, found := s.statuses[bearStoreKey(guildID, bearID)]
+	status, found := s.statuses[bearKey(guildID, bearID)]
 	if !found {
 		return nil, ErrNotFound
 	}
@@ -23,7 +23,7 @@ func (s *memoryBearStore) GetBearStatus(_ context.Context, guildID, bearID strin
 }
 
 func (s *memoryBearStore) SetBear(_ context.Context, guildID, bearID string, setTime time.Time, setBy string) error {
-	s.statuses[bearStoreKey(guildID, bearID)] = BearStatus{
+	s.statuses[bearKey(guildID, bearID)] = BearStatus{
 		Bear:    bearID,
 		GuildID: guildID,
 		SetAt:   time.Now(),
@@ -34,7 +34,7 @@ func (s *memoryBearStore) SetBear(_ context.Context, guildID, bearID string, set
 }
 
 func (s *memoryBearStore) UpdateBearNext(_ context.Context, guildID, bearID string, next time.Time) error {
-	key := bearStoreKey(guildID, bearID)
+	key := bearKey(guildID, bearID)
 	status, found := s.statuses[key]
 	if !found {
 		return ErrNotFound
@@ -50,10 +50,6 @@ func (s *memoryBearStore) GetAllBearStatuses(_ context.Context) ([]BearStatus, e
 		statuses = append(statuses, status)
 	}
 	return statuses, nil
-}
-
-func bearStoreKey(guildID, bearID string) string {
-	return guildID + "/" + bearID
 }
 
 func TestBearServiceSetAndGetBearWithoutCache(t *testing.T) {
@@ -79,8 +75,7 @@ func TestBearServiceTickPersistsNextBearTime(t *testing.T) {
 	service := NewBearService(store)
 	previous := time.Now().Add(-time.Hour)
 	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: previous}
-	store.statuses[bearStoreKey(status.GuildID, status.Bear)] = status
-	service.upsertBear(status)
+	store.statuses[bearKey(status.GuildID, status.Bear)] = status
 
 	if err := service.tick(context.Background(), time.Now()); err != nil {
 		t.Fatalf("tick() error = %v", err)
@@ -93,5 +88,34 @@ func TestBearServiceTickPersistsNextBearTime(t *testing.T) {
 	want := previous.Add(bearInterval)
 	if !got.Next.Equal(want) {
 		t.Errorf("persisted Next = %v, want %v", got.Next, want)
+	}
+}
+
+func TestBearServiceTickSendsReminderOncePerOccurrence(t *testing.T) {
+	store := newMemoryBearStore()
+	service := NewBearService(store)
+	now := time.Now()
+	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: now.Add(10 * time.Minute)}
+	store.statuses[bearKey(status.GuildID, status.Bear)] = status
+
+	if err := service.tick(context.Background(), now); err != nil {
+		t.Fatalf("first tick() error = %v", err)
+	}
+	if err := service.tick(context.Background(), now.Add(time.Minute)); err != nil {
+		t.Fatalf("second tick() error = %v", err)
+	}
+
+	select {
+	case reminder := <-service.ReminderChannel():
+		if reminder.Next != status.Next {
+			t.Errorf("reminder Next = %v, want %v", reminder.Next, status.Next)
+		}
+	default:
+		t.Fatal("expected reminder")
+	}
+	select {
+	case reminder := <-service.ReminderChannel():
+		t.Errorf("unexpected duplicate reminder: %#v", reminder)
+	default:
 	}
 }

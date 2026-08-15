@@ -10,24 +10,17 @@ import (
 )
 
 type BearService struct {
-	store        BearStore
-	bears        map[string]*scheduledBear
-	reminderChan chan Reminder
-	mu           sync.Mutex
-	storeMu      sync.Mutex
-}
-
-type scheduledBear struct {
-	status BearStatus
-	sent   bool
+	store         BearStore
+	sentReminders map[string]time.Time
+	reminderChan  chan Reminder
+	mu            sync.Mutex
 }
 
 func NewBearService(store BearStore) *BearService {
 	return &BearService{
-		store:        store,
-		bears:        make(map[string]*scheduledBear),
-		reminderChan: make(chan Reminder, 64),
-		mu:           sync.Mutex{},
+		store:         store,
+		sentReminders: make(map[string]time.Time),
+		reminderChan:  make(chan Reminder, 64),
 	}
 }
 
@@ -55,22 +48,14 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	if bearID != "1" && bearID != "2" {
 		return ErrInvalidBear
 	}
-	s.storeMu.Lock()
-	defer s.storeMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
 	if err != nil {
 		return fmt.Errorf("kingshot: set bear: %w", err)
 	}
-	status := BearStatus{
-		Bear:    bearID,
-		GuildID: guildId,
-		SetBy:   setBy,
-		SetAt:   time.Now(),
-		Next:    setTime,
-	}
-
-	s.upsertBear(status)
+	delete(s.sentReminders, bearKey(guildId, bearID))
 
 	return nil
 }
@@ -84,24 +69,15 @@ type Reminder struct {
 
 const bearInterval time.Duration = 48 * time.Hour
 
-// Start loads bear statuses from the store and starts a background goroutine that ticks every minute to check for bears that are due for a reminder.
-// Failure to load bears or tick the bears will be logged but not returned as an error. The goroutine will exit when the context is canceled.
-// This is in case of a transient error, the service will continue to run and attempt to load and tick bears on the next tick.
+// Start checks the store for due bear events every minute until ctx is canceled.
 func (s *BearService) Start(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	if err := s.loadBears(ctx); err != nil {
-		slog.Info("failed to load bears", "error", err)
-	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-ticker.C:
-			if err := s.loadBears(ctx); err != nil {
-				slog.Info("kingshot: refresh bears", "error", err)
-				continue
-			}
 			if err := s.tick(ctx, now); err != nil {
 				slog.Info("kingshot: tick bears", "error", err)
 			}
@@ -114,78 +90,42 @@ func (s *BearService) ReminderChannel() <-chan Reminder {
 }
 
 func (s *BearService) tick(ctx context.Context, now time.Time) error {
-	s.storeMu.Lock()
-	defer s.storeMu.Unlock()
-
 	s.mu.Lock()
-	keys := make([]string, 0, len(s.bears))
-	for key := range s.bears {
-		keys = append(keys, key)
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	for _, key := range keys {
-		s.mu.Lock()
-		bear, found := s.bears[key]
-		if !found {
-			s.mu.Unlock()
-			continue
-		}
-		if !bear.status.Next.After(now) {
-			steps := int64(now.Sub(bear.status.Next)/bearInterval) + 1
-			next := bear.status.Next.Add(time.Duration(steps) * bearInterval)
-			guildID, bearID := bear.status.GuildID, bear.status.Bear
-			s.mu.Unlock()
-			if err := s.store.UpdateBearNext(ctx, guildID, bearID, next); err != nil {
+	statuses, err := s.store.GetAllBearStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("get all bear statuses: %w", err)
+	}
+
+	for _, status := range statuses {
+		key := bearKey(status.GuildID, status.Bear)
+		if !status.Next.After(now) {
+			steps := int64(now.Sub(status.Next)/bearInterval) + 1
+			next := status.Next.Add(time.Duration(steps) * bearInterval)
+			if err := s.store.UpdateBearNext(ctx, status.GuildID, status.Bear, next); err != nil {
 				return fmt.Errorf("update bear next: %w", err)
 			}
-			s.mu.Lock()
-			bear = s.bears[key]
-			if bear == nil || bear.status.GuildID != guildID || bear.status.Bear != bearID {
-				s.mu.Unlock()
-				continue
-			}
-			bear.status.Next = next
-			bear.sent = false
+			status.Next = next
+			delete(s.sentReminders, key)
 		}
-		if bear.status.Next.Sub(now) < time.Minute*30 && !bear.sent {
+		if status.Next.Sub(now) < time.Minute*30 && !s.sentReminders[key].Equal(status.Next) {
 			reminder := Reminder{
-				BearID:  bear.status.Bear,
-				GuildID: bear.status.GuildID,
-				Next:    bear.status.Next,
+				BearID:  status.Bear,
+				GuildID: status.GuildID,
+				Next:    status.Next,
 				Sent:    true,
 			}
 			select {
 			case s.reminderChan <- reminder:
-				bear.sent = true
+				s.sentReminders[key] = status.Next
 			default:
 			}
 		}
-		s.mu.Unlock()
 	}
 	return nil
 }
 
-func (s *BearService) loadBears(ctx context.Context) error {
-	statuses, err := s.store.GetAllBearStatuses(ctx)
-	if err != nil {
-		return fmt.Errorf("kingshot: get all bear statuses: %w", err)
-	}
-
-	for _, status := range statuses {
-		s.upsertBear(status)
-	}
-	return nil
-}
-
-func (s *BearService) upsertBear(status BearStatus) {
-	key := status.GuildID + "/" + status.Bear
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if existing, found := s.bears[key]; found && existing.status.Next.Equal(status.Next) {
-		existing.status = status
-		return
-	}
-	s.bears[key] = &scheduledBear{status: status}
+func bearKey(guildID, bearID string) string {
+	return guildID + "/" + bearID
 }

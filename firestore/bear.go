@@ -64,7 +64,7 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 		if err != nil && status.Code(err) != codes.NotFound {
 			return fmt.Errorf("firestore: get bear doc: %w", err)
 		}
-		if !docSnap.Exists() {
+		if err != nil || docSnap == nil || !docSnap.Exists() {
 			b := bear{
 				Bear:      bearID,
 				GuildID:   guildId,

@@ -153,7 +153,9 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 					{Name: "Starts at", Value: fmt.Sprintf("<t:%d:F>", r.Next.Unix())},
 				},
 			}
-			channelID := guildChannel(ctx, s, h.store, kingshot.BearChannel, r.GuildID)
+			channelCtx, cancel := context.WithTimeout(ctx, serviceCallTimeout)
+			channelID := guildChannel(channelCtx, s, h.store, kingshot.BearChannel, r.GuildID)
+			cancel()
 			if channelID == "" {
 				slog.Error("no available channel for bear reminder", "guild_id", r.GuildID, "bear_id", r.BearID)
 				continue
@@ -174,7 +176,9 @@ func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionC
 	subcommand := data.Options[0]
 	trapID := subcommand.Options[0].StringValue()
 
-	status, err := h.svc.GetBearStatus(context.Background(), i.GuildID, trapID)
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+	status, err := h.svc.GetBearStatus(ctx, i.GuildID, trapID)
 	if err != nil {
 		slog.Info("failed to get bear status", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
 		if errors.Is(err, kingshot.ErrNotFound) {
@@ -207,7 +211,9 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	err = h.svc.SetBear(context.Background(), i.GuildID, trapID, setTime, i.Member.User.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+	err = h.svc.SetBear(ctx, i.GuildID, trapID, setTime, i.Member.User.ID)
 	if err != nil {
 		slog.Info("failed to set bear trap", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
 		if errors.Is(err, kingshot.ErrSetTimeInPast) {

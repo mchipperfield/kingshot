@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -84,7 +85,7 @@ func main() {
 
 		startReminders.Do(func() {
 			go func() {
-				if err := bearService.Start(ctx); err != nil {
+				if err := bearService.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					logger.Log("failed to start bear reminders", "error", err)
 				}
 			}()

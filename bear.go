@@ -95,6 +95,7 @@ const bearInterval time.Duration = 48 * time.Hour
 func (s *BearService) Start(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
+	slog.Info("bear reminder scheduler started", "interval", time.Minute)
 	for {
 		select {
 		case <-ctx.Done():
@@ -131,6 +132,7 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			if err := s.store.UpdateBearNext(ctx, status.GuildID, status.Bear, next); err != nil {
 				return fmt.Errorf("update bear next: %w", err)
 			}
+			slog.Info("bear event advanced", "guild_id", status.GuildID, "bear_id", status.Bear, "next", next)
 			status.Next = next
 			delete(s.sentReminders, key)
 		}
@@ -144,6 +146,7 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			select {
 			case s.reminderChan <- reminder:
 				s.sentReminders[key] = status.Next
+				slog.Info("bear reminder queued", "guild_id", status.GuildID, "bear_id", status.Bear, "next", status.Next)
 			default:
 			}
 		}

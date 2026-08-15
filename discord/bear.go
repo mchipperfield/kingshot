@@ -150,6 +150,7 @@ func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreat
 }
 
 func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Session) {
+	slog.Info("bear reminder listener started")
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,10 +160,10 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 				slog.Warn("bear reminder channel closed")
 				return
 			}
-			slog.Info("bear reminder", "guild_id", r.GuildID, "bear_id", r.BearID, "next", r.Next)
+
 			embed := &discordgo.MessageEmbed{
 				Title:       fmt.Sprintf("🐻 Bear Trap %s", r.BearID),
-				Description: fmt.Sprintf("Starting <t:%d:R> — rally up!", r.Next.Unix()),
+				Description: fmt.Sprintf("Bear starts at <t:%d:F> — rally up!", r.Next.Unix()),
 				Color:       11261619,
 				Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
 				Author: &discordgo.MessageEmbedAuthor{
@@ -170,7 +171,8 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 					IconURL: thumbnailURL,
 				},
 				Fields: []*discordgo.MessageEmbedField{
-					{Name: "Starts at", Value: fmt.Sprintf("<t:%d:F>", r.Next.Unix())},
+					//{Name: "Starts at", Value: fmt.Sprintf("<t:%d:F>", r.Next.Unix())},
+					{Name: "That's", Value: fmt.Sprintf("<t:%d:R>", r.Next.Unix())},
 				},
 			}
 			channelCtx, cancel := context.WithTimeout(ctx, serviceCallTimeout)
@@ -185,6 +187,7 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 				slog.Error("failed to send bear reminder", "error", err, "guild_id", r.GuildID, "bear_id", r.BearID, "channel_id", channelID)
 				continue
 			}
+
 			slog.Info("bear reminder sent", "guild_id", r.GuildID, "bear_id", r.BearID, "message_id", msg.ID)
 
 		}
@@ -249,11 +252,11 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 	}
 
 	status := &kingshot.BearStatus{
-		Bear:    trapID,
-		GuildID: i.GuildID,
-		SetBy:   i.Member.User.ID,
-		SetAt:   time.Now(),
-		Next:    setTime,
+		Bear:             trapID,
+		GuildID:          i.GuildID,
+		SetBy:            i.Member.User.ID,
+		SetAt:            time.Now(),
+		Next:             setTime,
 		RemindersEnabled: true,
 	}
 	replyWithEmbed(s, i, bearStatusEmbed(status, "Bear trap configured", userName(s, status.SetBy)))

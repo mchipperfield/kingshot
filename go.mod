@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	cloud.google.com/go/firestore v1.24.0
+	cloud.google.com/go/secretmanager v1.21.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/peterbourgon/ff v1.7.1
 	golang.org/x/oauth2 v0.36.0
@@ -17,6 +18,7 @@ require (
 	cloud.google.com/go/auth v0.22.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect

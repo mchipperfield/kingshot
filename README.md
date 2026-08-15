@@ -137,12 +137,14 @@ FIRESTORE_PROJECT_ID=your-gcp-project-id
 | Flag / environment variable | Required | Description |
 | --- | --- | --- |
 | `discord_client_id` | Yes | Discord OAuth application client ID. |
-| `discord_client_secret` | Yes | Discord OAuth application client secret. |
+| `discord_client_secret` | Local only | Discord OAuth application client secret. When omitted, it is loaded from Secret Manager. |
+| `discord_client_secret_name` | No | Secret Manager secret ID. Defaults to `discord_client_secret`. |
 | `discord_redirect_uri` | Yes | OAuth callback URI registered with Discord. |
-| `signing_key` | Yes | HMAC key used to sign privacy session cookies. |
+| `signing_key` | Local only | HMAC key used to sign privacy session cookies. When omitted, it is loaded from Secret Manager. |
+| `signing_key_name` | No | Secret Manager secret ID. Defaults to `signing_key`. |
 | `firestore_project_id` | Yes | Google Cloud project containing the Firestore database. |
 
-For App Engine, these values are supplied through the local, ignored `app.yaml` deployment configuration. The production callback URI is:
+For App Engine, `app.yaml` contains only the Secret Manager secret IDs. The runtime service account needs the `roles/secretmanager.secretAccessor` role on both secrets. The production callback URI is:
 
 ```text
 https://kingshot-8539b.ew.r.appspot.com/oauth/discord/callback

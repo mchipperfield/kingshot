@@ -34,9 +34,9 @@ func TestBearCommands(t *testing.T) {
 
 func TestCanConfigureGuild(t *testing.T) {
 	for _, test := range []struct {
-		name        string
-		member      *discordgo.Member
-		want        bool
+		name   string
+		member *discordgo.Member
+		want   bool
 	}{
 		{name: "administrator", member: &discordgo.Member{Permissions: discordgo.PermissionAdministrator}, want: true},
 		{name: "manage guild", member: &discordgo.Member{Permissions: discordgo.PermissionManageGuild}, want: true},

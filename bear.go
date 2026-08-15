@@ -84,11 +84,14 @@ type Reminder struct {
 
 const bearInterval time.Duration = 48 * time.Hour
 
+// Start loads bear statuses from the store and starts a background goroutine that ticks every minute to check for bears that are due for a reminder.
+// Failure to load bears or tick the bears will be logged but not returned as an error. The goroutine will exit when the context is canceled.
+// This is in case of a transient error, the service will continue to run and attempt to load and tick bears on the next tick.
 func (s *BearService) Start(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	if err := s.loadBears(ctx); err != nil {
-		return fmt.Errorf("kingshot: load bears: %w", err)
+		slog.Info("failed to load bears", "error", err)
 	}
 	for {
 		select {
@@ -146,13 +149,17 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			bear.sent = false
 		}
 		if bear.status.Next.Sub(now) < time.Minute*30 && !bear.sent {
-			s.reminderChan <- Reminder{
+			reminder := Reminder{
 				BearID:  bear.status.Bear,
 				GuildID: bear.status.GuildID,
 				Next:    bear.status.Next,
 				Sent:    true,
 			}
-			bear.sent = true
+			select {
+			case s.reminderChan <- reminder:
+				bear.sent = true
+			default:
+			}
 		}
 		s.mu.Unlock()
 	}

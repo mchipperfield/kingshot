@@ -55,8 +55,6 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	if bearID != "1" && bearID != "2" {
 		return ErrInvalidBear
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.storeMu.Lock()
 	defer s.storeMu.Unlock()
 
@@ -71,7 +69,9 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 		SetAt:   time.Now(),
 		Next:    setTime,
 	}
+	s.mu.Lock()
 	s.upsertBearLocked(status)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -111,32 +111,54 @@ func (s *BearService) ReminderChannel() <-chan Reminder {
 }
 
 func (s *BearService) tick(ctx context.Context, now time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.storeMu.Lock()
+	defer s.storeMu.Unlock()
 
-	for _, bear := range s.bears {
+	s.mu.Lock()
+	keys := make([]string, 0, len(s.bears))
+	for key := range s.bears {
+		keys = append(keys, key)
+	}
+	s.mu.Unlock()
+
+	for _, key := range keys {
+		s.mu.Lock()
+		bear, found := s.bears[key]
+		if !found {
+			s.mu.Unlock()
+			continue
+		}
 		if !bear.status.Next.After(now) {
 			steps := int64(now.Sub(bear.status.Next)/bearInterval) + 1
 			next := bear.status.Next.Add(time.Duration(steps) * bearInterval)
-			s.storeMu.Lock()
-			if err := s.store.UpdateBearNext(ctx, bear.status.GuildID, bear.status.Bear, next); err != nil {
-				s.storeMu.Unlock()
+			guildID, bearID := bear.status.GuildID, bear.status.Bear
+			s.mu.Unlock()
+			if err := s.store.UpdateBearNext(ctx, guildID, bearID, next); err != nil {
 				return fmt.Errorf("update bear next: %w", err)
 			}
-			s.storeMu.Unlock()
+			s.mu.Lock()
+			bear = s.bears[key]
+			if bear == nil || bear.status.GuildID != guildID || bear.status.Bear != bearID {
+				s.mu.Unlock()
+				continue
+			}
 			bear.status.Next = next
 			bear.sent = false
 		}
 		if bear.status.Next.Sub(now) < time.Minute*30 && !bear.sent {
-			bear.sent = true
-			s.reminderChan <- Reminder{
+			reminder := Reminder{
 				BearID:  bear.status.Bear,
 				GuildID: bear.status.GuildID,
 				Next:    bear.status.Next,
 				Sent:    true,
 			}
+			select {
+			case s.reminderChan <- reminder:
+				bear.sent = true
+			default:
+			}
 		}
-
+		s.mu.Unlock()
 	}
 	return nil
 }

@@ -74,6 +74,7 @@ type SetChannelRequest struct {
 type BearStore interface {
 	GetBearStatus(ctx context.Context, guildId, bearID string) (*BearStatus, error)
 	SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string) error
+	GetAllBears(ctx context.Context) ([]*Reminder, error)
 }
 
 var (

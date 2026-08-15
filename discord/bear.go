@@ -103,6 +103,55 @@ func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreat
 
 }
 
+func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Session) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case r, ok := <-h.svc.ReminderChannel():
+			if !ok {
+				slog.Warn("bear reminder channel closed")
+				return
+			}
+			slog.Info("bear reminder", "guild_id", r.GuildID, "bear_id", r.BearID, "next", r.Next)
+			channels, err := guildFindDefaultChannels(s, r.GuildID)
+			if err != nil {
+				slog.Error("failed to find default channels", "error", err, "guild_id", r.GuildID)
+				continue
+			}
+			if len(channels) == 0 {
+				slog.Info("no channel to send reminder to", "guild_id", r.GuildID)
+			}
+			channel, err := s.Channel(channels[0])
+			if err != nil {
+				slog.Error("failed to get channel", "error", err, "guild_id", r.GuildID)
+				continue
+			}
+
+			embed := &discordgo.MessageEmbed{
+				Title:       fmt.Sprintf("🐻 Bear Trap %s", r.BearID),
+				Description: fmt.Sprintf("Starting <t:%d:R> — rally up!", r.Next.Unix()),
+				Color:       11261619,
+				Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
+				Author: &discordgo.MessageEmbedAuthor{
+					Name:    "Goaf's Herald",
+					IconURL: thumbnailURL,
+				},
+				Fields: []*discordgo.MessageEmbedField{
+					{Name: "Starts at", Value: fmt.Sprintf("<t:%d:F>", r.Next.Unix())},
+				},
+			}
+			msg, err := s.ChannelMessageSendEmbed(channel.ID, embed)
+			if err != nil {
+				slog.Error("failed to send bear reminder", "error", err, "guild_id", r.GuildID, "bear_id", r.BearID)
+				continue
+			}
+			slog.Info("bear reminder sent", "guild_id", r.GuildID, "bear_id", r.BearID, "message_id", msg.ID)
+
+		}
+	}
+}
+
 func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	data := i.ApplicationCommandData()
 	subcommand := data.Options[0]

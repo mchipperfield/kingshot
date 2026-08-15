@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
@@ -62,12 +63,31 @@ func main() {
 	svc := kingshot.NewService(playerStore, codeStore)
 
 	giftCodeHandler := discord.NewGiftCodeHandler(svc, firestore.NewAllianceStore(client))
-	bearHandler := discord.NewBearHandler(kingshot.NewBearService(firestore.NewBearStore(client)))
+	bearService := kingshot.NewBearService(firestore.NewBearStore(client))
+	bearHandler := discord.NewBearHandler(bearService)
 	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler)
 
 	session.AddHandler(giftCodeHandler.Handle)
 	session.AddHandler(bearHandler.Handle)
 	session.AddHandler(commandRegistry.HandleReady)
+	// startReminders is called once when the bot is ready,
+	// and starts a goroutine to listen for reminders from the BearService and send them to the appropriate guild channels.
+	// Must be called only once, as discord sessions can disconnect and reconnect,
+	// and we don't want to start multiple goroutines for the same reminders.
+	var startReminders sync.Once
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+
+		startReminders.Do(func() {
+			go func() {
+				if err := bearService.Start(ctx); err != nil {
+					logger.Log("failed to start bear reminders", "error", err)
+				}
+			}()
+			go bearHandler.ProcessBearReminders(ctx, s)
+		})
+	})
 
 	if err := session.Open(); err != nil {
 		logger.Log("error opening websocket", "error", err)

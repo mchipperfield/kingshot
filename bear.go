@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -88,10 +89,12 @@ func (s *BearService) Start(ctx context.Context) error {
 			return ctx.Err()
 		case now := <-ticker.C:
 			if err := s.loadBears(ctx); err != nil {
-				return fmt.Errorf("kingshot: refresh bears: %w", err)
+				slog.Info("kingshot: refresh bears", "error", err)
+				continue
 			}
 			if err := s.tick(ctx, now); err != nil {
-				return fmt.Errorf("kingshot: advance bears: %w", err)
+				slog.Info("kingshot: tick bears", "error", err)
+				continue
 			}
 		}
 	}

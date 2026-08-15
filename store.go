@@ -61,9 +61,16 @@ type CodeStore interface {
 }
 
 type AllianceStore interface {
-	SetRedemptionChannel(ctx context.Context, req *SetChannelRequest) error
-	GetRedemptionChannel(ctx context.Context, guildId string) (string, error)
+	SetChannel(ctx context.Context, kind ChannelKind, req *SetChannelRequest) error
+	GetChannel(ctx context.Context, kind ChannelKind, guildId string) (string, error)
 }
+
+type ChannelKind string
+
+const (
+	RedemptionChannel ChannelKind = "redemption"
+	BearChannel       ChannelKind = "bear"
+)
 
 type SetChannelRequest struct {
 	GuildId   string

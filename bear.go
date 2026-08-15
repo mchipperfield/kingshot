@@ -37,16 +37,21 @@ type BearStatus struct {
 	GuildID string
 }
 
+var (
+	ErrSetTimeInPast = errors.New("set time cannot be in the past")
+	ErrInvalidBear   = errors.New("invalid bear trap")
+)
+
 func (s *BearService) GetBearStatus(ctx context.Context, guildId, bearID string) (*BearStatus, error) {
 	return s.store.GetBearStatus(ctx, guildId, bearID)
 }
 
 func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string) error {
 	if setTime.Before(time.Now()) {
-		return errors.New("set time cannot be in the past")
+		return ErrSetTimeInPast
 	}
 	if bearID != "1" && bearID != "2" {
-		return errors.New("invalid bear trap")
+		return ErrInvalidBear
 	}
 	err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
 	if err != nil {

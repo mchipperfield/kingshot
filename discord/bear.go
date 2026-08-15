@@ -2,8 +2,10 @@ package discord
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -11,11 +13,12 @@ import (
 )
 
 type BearHandler struct {
-	svc *kingshot.BearService
+	svc   *kingshot.BearService
+	store kingshot.AllianceStore
 }
 
-func NewBearHandler(svc *kingshot.BearService) *BearHandler {
-	return &BearHandler{svc: svc}
+func NewBearHandler(svc *kingshot.BearService, store kingshot.AllianceStore) *BearHandler {
+	return &BearHandler{svc: svc, store: store}
 }
 
 func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {
@@ -74,10 +77,31 @@ func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {
 						},
 						{
 							Type:         discordgo.ApplicationCommandOptionString,
-							Name:         "time",
-							Description:  "When to set the bear trap",
+							Name:         "date",
+							Description:  "Date of next bear trap (YYYY-MM-DD)",
 							Required:     true,
 							Autocomplete: false,
+						},
+						{
+							Type:         discordgo.ApplicationCommandOptionString,
+							Name:         "time",
+							Description:  "Time (UTC) of next bear trap (HH:MM, 24-hour format)",
+							Required:     true,
+							Autocomplete: false,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "channel",
+					Description: "Set the channel for bear reminders",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:         discordgo.ApplicationCommandOptionChannel,
+							Name:         "channel",
+							Description:  "Channel for bear reminders",
+							Required:     true,
+							ChannelTypes: []discordgo.ChannelType{discordgo.ChannelTypeGuildText, discordgo.ChannelTypeGuildNews},
 						},
 					},
 				},
@@ -96,6 +120,8 @@ func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreat
 		h.bearStatus(s, i)
 	case "set":
 		h.bearSet(s, i)
+	case "channel":
+		h.bearChannel(s, i)
 	default:
 		slog.Warn("unrecognised bear subcommand", "subcommand", subcommand.Name)
 		reply(s, i, fmt.Sprintf("Unrecognised bear subcommand %q", subcommand.Name))
@@ -114,20 +140,6 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 				return
 			}
 			slog.Info("bear reminder", "guild_id", r.GuildID, "bear_id", r.BearID, "next", r.Next)
-			channels, err := guildFindDefaultChannels(s, r.GuildID)
-			if err != nil {
-				slog.Error("failed to find default channels", "error", err, "guild_id", r.GuildID)
-				continue
-			}
-			if len(channels) == 0 {
-				slog.Info("no channel to send reminder to", "guild_id", r.GuildID)
-			}
-			channel, err := s.Channel(channels[0])
-			if err != nil {
-				slog.Error("failed to get channel", "error", err, "guild_id", r.GuildID)
-				continue
-			}
-
 			embed := &discordgo.MessageEmbed{
 				Title:       fmt.Sprintf("🐻 Bear Trap %s", r.BearID),
 				Description: fmt.Sprintf("Starting <t:%d:R> — rally up!", r.Next.Unix()),
@@ -141,9 +153,14 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 					{Name: "Starts at", Value: fmt.Sprintf("<t:%d:F>", r.Next.Unix())},
 				},
 			}
-			msg, err := s.ChannelMessageSendEmbed(channel.ID, embed)
+			channelID := guildChannel(ctx, s, h.store, kingshot.BearChannel, r.GuildID)
+			if channelID == "" {
+				slog.Error("no available channel for bear reminder", "guild_id", r.GuildID, "bear_id", r.BearID)
+				continue
+			}
+			msg, err := s.ChannelMessageSendEmbed(channelID, embed)
 			if err != nil {
-				slog.Error("failed to send bear reminder", "error", err, "guild_id", r.GuildID, "bear_id", r.BearID)
+				slog.Error("failed to send bear reminder", "error", err, "guild_id", r.GuildID, "bear_id", r.BearID, "channel_id", channelID)
 				continue
 			}
 			slog.Info("bear reminder sent", "guild_id", r.GuildID, "bear_id", r.BearID, "message_id", msg.ID)
@@ -160,17 +177,119 @@ func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionC
 	status, err := h.svc.GetBearStatus(context.Background(), i.GuildID, trapID)
 	if err != nil {
 		slog.Info("failed to get bear status", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
+		if errors.Is(err, kingshot.ErrNotFound) {
+			reply(s, i, fmt.Sprintf("Bear trap %s has not been configured yet. You can do this with \"bear set\".", trapID))
+			return
+		}
 		reply(s, i, "Failed to get bear status")
 		return
 	}
 
-	embed := discordgo.MessageEmbed{
-		Title:       fmt.Sprintf("Bear Trap %s", trapID),
-		Description: "Status of the bear trap",
-		Timestamp:   time.Now().Format(time.RFC3339),
-		Color:       11261619,
+	replyWithEmbed(s, i, bearStatusEmbed(status, "Status of the bear trap", userName(s, status.SetBy)))
+}
+
+func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.ApplicationCommandData()
+	subcommand := data.Options[0]
+	trapID := subcommand.Options[0].StringValue()
+	dateStr := subcommand.Options[1].StringValue()
+	timeStr := subcommand.Options[2].StringValue()
+	dateTime := strings.Join([]string{dateStr, timeStr}, " ")
+
+	setTime, err := time.Parse("2006-01-02 15:04", dateTime)
+	if err != nil {
+		slog.Info("failed to parse time", "error", err, "guild_id", i.GuildID, "trap_id", trapID, "time", timeStr)
+		reply(s, i, "Invalid time format. Please use YYYY-MM-DD for date and HH:MM (24-hour) for time.")
+		return
+	}
+
+	err = h.svc.SetBear(context.Background(), i.GuildID, trapID, setTime, i.Member.User.ID)
+	if err != nil {
+		slog.Info("failed to set bear trap", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
+		if errors.Is(err, kingshot.ErrSetTimeInPast) {
+			reply(s, i, "The bear trap time must be in the future.")
+			return
+		}
+		if errors.Is(err, kingshot.ErrInvalidBear) {
+			reply(s, i, "Please select a valid bear trap. Valid options are 1 or 2.")
+			return
+		}
+		reply(s, i, "Failed to set bear trap - please try again later.")
+		return
+	}
+
+	status := &kingshot.BearStatus{
+		Bear:    trapID,
+		GuildID: i.GuildID,
+		SetBy:   i.Member.User.ID,
+		SetAt:   time.Now(),
+		Next:    setTime,
+	}
+	replyWithEmbed(s, i, bearStatusEmbed(status, "Bear trap configured", userName(s, status.SetBy)))
+}
+
+func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if h.store == nil {
+		reply(s, i, "Unable to set bear reminder channel due to a database error.")
+		return
+	}
+
+	options := i.ApplicationCommandData().Options
+	if len(options) == 0 || len(options[0].Options) != 1 {
+		slog.Error("received malformed bear channel interaction")
+		reply(s, i, "Invalid channel specified.")
+		return
+	}
+
+	channel := options[0].Options[0].ChannelValue(s)
+	if channel == nil || channel.GuildID != i.GuildID {
+		reply(s, i, "The specified channel is not in this guild.")
+		return
+	}
+	if channel.Type != discordgo.ChannelTypeGuildText && channel.Type != discordgo.ChannelTypeGuildNews {
+		reply(s, i, "The specified channel is not a supported text channel.")
+		return
+	}
+	if !botHasPermission(s, channel.ID) {
+		reply(s, i, "The bot does not have permission to send messages to this channel.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+	if err := h.store.SetChannel(ctx, kingshot.BearChannel, &kingshot.SetChannelRequest{
+		GuildId:   i.GuildID,
+		ChannelId: channel.ID,
+		UserId:    i.Member.User.ID,
+	}); err != nil {
+		slog.Error("failed to set bear reminder channel", "error", err, "guild_id", i.GuildID, "channel_id", channel.ID)
+		reply(s, i, "Failed to set bear reminder channel.")
+		return
+	}
+
+	slog.Info("bear reminder channel set", "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
+	reply(s, i, fmt.Sprintf("Bear reminder channel set to <#%s>.", channel.ID))
+}
+
+func userName(s *discordgo.Session, userID string) string {
+	user, err := s.User(userID)
+	if err != nil {
+		slog.Info("failed to look up Discord user", "error", err, "user_id", userID)
+		return "Unknown user"
+	}
+	return user.Username
+}
+
+func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *discordgo.MessageEmbed {
+	next := fmt.Sprintf("<t:%d:F>", status.Next.UTC().Unix())
+
+	return &discordgo.MessageEmbed{
+		Title:       fmt.Sprintf("Bear Trap %s", status.Bear),
+		Description: description,
+		//Timestamp:   time.Now().Format(time.RFC3339),
+		Color: 11261619,
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Set by %s on %s", status.SetBy, status.SetAt.Format(time.RFC3339)),
+			Text: fmt.Sprintf("Set by %s on %s", setBy, status.SetAt.UTC().Format("02 Jan 2006 at 15:04 UTC")),
 		},
 		Thumbnail: &discordgo.MessageEmbedThumbnail{
 			URL: thumbnailURL,
@@ -182,36 +301,12 @@ func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionC
 		Fields: []*discordgo.MessageEmbedField{
 			{
 				Name:  "Next Bear At:",
-				Value: status.Next.Format(time.RFC3339),
+				Value: next,
 			},
 			{
-				Name:  "That's in:",
-				Value: time.Until(status.Next).String(),
+				Name:  "That's:",
+				Value: fmt.Sprintf("<t:%d:R>", status.Next.Unix()),
 			},
 		},
 	}
-	replyWithEmbed(s, i, &embed)
-}
-
-func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	subcommand := data.Options[0]
-	trapID := subcommand.Options[0].StringValue()
-	timeStr := subcommand.Options[1].StringValue()
-
-	setTime, err := time.Parse(time.RFC3339, timeStr)
-	if err != nil {
-		slog.Info("failed to parse time", "error", err, "guild_id", i.GuildID, "trap_id", trapID, "time", timeStr)
-		reply(s, i, "Failed to parse time")
-		return
-	}
-
-	err = h.svc.SetBear(context.Background(), i.GuildID, trapID, setTime, i.User.ID)
-	if err != nil {
-		slog.Info("failed to set bear trap", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
-		reply(s, i, "Failed to set bear trap")
-		return
-	}
-
-	reply(s, i, fmt.Sprintf("Bear trap %s set for %s", trapID, setTime.Format(time.RFC3339)))
 }

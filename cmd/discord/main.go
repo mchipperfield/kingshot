@@ -63,10 +63,11 @@ func main() {
 
 	svc := kingshot.NewService(playerStore, codeStore)
 
-	giftCodeHandler := discord.NewGiftCodeHandler(svc, firestore.NewAllianceStore(client))
+	allianceStore := firestore.NewAllianceStore(client)
+	giftCodeHandler := discord.NewGiftCodeHandler(svc, allianceStore)
 	bearService := kingshot.NewBearService(inmem.NewBearStore(firestore.NewBearStore(client)))
 
-	bearHandler := discord.NewBearHandler(bearService)
+	bearHandler := discord.NewBearHandler(bearService, allianceStore)
 	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler)
 
 	session.AddHandler(giftCodeHandler.Handle)

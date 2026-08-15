@@ -31,3 +31,21 @@ func TestBearCommands(t *testing.T) {
 		t.Fatalf("got command %#v, want bear chat command", commands[0])
 	}
 }
+
+func TestCanConfigureBearChannel(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		permissions int64
+		want        bool
+	}{
+		{name: "administrator", permissions: discordgo.PermissionAdministrator, want: true},
+		{name: "manage guild", permissions: discordgo.PermissionManageGuild, want: true},
+		{name: "regular member", permissions: 0, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := canConfigureBearChannel(test.permissions); got != test.want {
+				t.Errorf("canConfigureBearChannel() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}

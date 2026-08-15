@@ -229,6 +229,10 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 }
 
 func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i.Member == nil || !canConfigureBearChannel(i.Member.Permissions) {
+		reply(s, i, "You need Manage Server permission to set the bear reminder channel.")
+		return
+	}
 	if h.store == nil {
 		reply(s, i, "Unable to set bear reminder channel due to a database error.")
 		return
@@ -269,6 +273,10 @@ func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.Interaction
 
 	slog.Info("bear reminder channel set", "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
 	reply(s, i, fmt.Sprintf("Bear reminder channel set to <#%s>.", channel.ID))
+}
+
+func canConfigureBearChannel(permissions int64) bool {
+	return permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0
 }
 
 func userName(s *discordgo.Session, userID string) string {

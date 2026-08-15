@@ -48,7 +48,18 @@ func (s *recordingBearStore) SetBear(_ context.Context, guildID, bearID string, 
 		SetAt:   time.Now(),
 		SetBy:   setBy,
 		Next:    setTime,
+		RemindersEnabled: true,
 	}
+	return nil
+}
+
+func (s *recordingBearStore) SetBearRemindersEnabled(_ context.Context, guildID, bearID string, enabled bool) error {
+	status, found := s.statuses[bearKey(guildID, bearID)]
+	if !found {
+		return kingshot.ErrNotFound
+	}
+	status.RemindersEnabled = enabled
+	s.statuses[bearKey(guildID, bearID)] = status
 	return nil
 }
 
@@ -82,6 +93,7 @@ func TestBearStoreGetBearStatusCachesBackingStoreResult(t *testing.T) {
 		SetBy:   "user-1",
 		SetAt:   time.Now().Add(-time.Hour),
 		Next:    time.Now().Add(time.Hour),
+		RemindersEnabled: true,
 	}
 	backingStore := newRecordingBearStore(status)
 	store := NewBearStore(backingStore)
@@ -142,6 +154,7 @@ func TestBearStoreGetAllBearStatusesCachesBulkResult(t *testing.T) {
 		SetBy:   "user-1",
 		SetAt:   time.Now().Add(-time.Hour),
 		Next:    time.Now().Add(time.Hour),
+		RemindersEnabled: true,
 	}
 	backingStore := newRecordingBearStore(status)
 	store := NewBearStore(backingStore)
@@ -157,5 +170,26 @@ func TestBearStoreGetAllBearStatusesCachesBulkResult(t *testing.T) {
 	}
 	if backingStore.getAllCalls != 1 {
 		t.Errorf("backing GetAllBearStatuses calls = %d, want 1", backingStore.getAllCalls)
+	}
+}
+
+func TestBearStoreDisableRemindersUpdatesCache(t *testing.T) {
+	status := kingshot.BearStatus{Bear: "1", GuildID: "guild-1", RemindersEnabled: true}
+	backingStore := newRecordingBearStore(status)
+	store := NewBearStore(backingStore)
+
+	if _, err := store.GetBearStatus(context.Background(), status.GuildID, status.Bear); err != nil {
+		t.Fatalf("GetBearStatus() error = %v", err)
+	}
+	if err := store.SetBearRemindersEnabled(context.Background(), status.GuildID, status.Bear, false); err != nil {
+		t.Fatalf("SetBearRemindersEnabled() error = %v", err)
+	}
+
+	got, err := store.GetBearStatus(context.Background(), status.GuildID, status.Bear)
+	if err != nil {
+		t.Fatalf("GetBearStatus() error = %v", err)
+	}
+	if got.RemindersEnabled {
+		t.Error("cached RemindersEnabled = true, want false")
 	}
 }

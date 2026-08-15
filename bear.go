@@ -25,11 +25,19 @@ func NewBearService(store BearStore) *BearService {
 }
 
 type BearStatus struct {
-	Bear    string
-	SetAt   time.Time
-	SetBy   string
-	Next    time.Time
-	GuildID string
+	Bear             string
+	SetAt            time.Time
+	SetBy            string
+	Next             time.Time
+	GuildID          string
+	RemindersEnabled bool
+}
+
+func (s BearStatus) Reminders() string {
+	if s.RemindersEnabled {
+		return "Enabled"
+	}
+	return "Disabled"
 }
 
 var (
@@ -57,6 +65,20 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	}
 	delete(s.sentReminders, bearKey(guildId, bearID))
 
+	return nil
+}
+
+func (s *BearService) DisableBearReminders(ctx context.Context, guildID, bearID string) error {
+	if bearID != "1" && bearID != "2" {
+		return ErrInvalidBear
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.store.SetBearRemindersEnabled(ctx, guildID, bearID, false); err != nil {
+		return fmt.Errorf("kingshot: disable bear reminders: %w", err)
+	}
+	delete(s.sentReminders, bearKey(guildID, bearID))
 	return nil
 }
 
@@ -99,6 +121,9 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 	}
 
 	for _, status := range statuses {
+		if !status.RemindersEnabled {
+			continue
+		}
 		key := bearKey(status.GuildID, status.Bear)
 		if !status.Next.After(now) {
 			steps := int64(now.Sub(status.Next)/bearInterval) + 1

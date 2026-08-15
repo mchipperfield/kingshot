@@ -68,8 +68,25 @@ func (s *BearStore) SetBear(ctx context.Context, guildId, bearID string, setTime
 			SetBy:   setBy,
 			Next:    setTime,
 			GuildID: guildId,
+			RemindersEnabled: true,
 		},
 		expiresAt: now.Add(s.ttl),
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *BearStore) SetBearRemindersEnabled(ctx context.Context, guildID, bearID string, enabled bool) error {
+	if err := s.store.SetBearRemindersEnabled(ctx, guildID, bearID, enabled); err != nil {
+		return err
+	}
+
+	key := guildID + "/" + bearID
+	s.mu.Lock()
+	if entry, found := s.cache[key]; found {
+		entry.status.RemindersEnabled = enabled
+		entry.expiresAt = time.Now().Add(s.ttl)
+		s.cache[key] = entry
 	}
 	s.mu.Unlock()
 	return nil
@@ -97,7 +114,9 @@ func (s *BearStore) GetAllBearStatuses(ctx context.Context) ([]kingshot.BearStat
 	if now.Before(s.allExpiresAt) {
 		statuses := make([]kingshot.BearStatus, 0, len(s.cache))
 		for _, entry := range s.cache {
-			statuses = append(statuses, entry.status)
+			if entry.status.RemindersEnabled {
+				statuses = append(statuses, entry.status)
+			}
 		}
 		s.mu.RUnlock()
 		return statuses, nil

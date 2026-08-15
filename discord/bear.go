@@ -93,6 +93,24 @@ func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "disable",
+					Description: "Disable bear reminders",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:         discordgo.ApplicationCommandOptionString,
+							Name:         "trap",
+							Description:  "Which bear trap?",
+							Required:     true,
+							Autocomplete: false,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "1", Value: "1"},
+								{Name: "2", Value: "2"},
+							},
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "channel",
 					Description: "Set the channel for bear reminders",
 					Options: []*discordgo.ApplicationCommandOption{
@@ -120,6 +138,8 @@ func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreat
 		h.bearStatus(s, i)
 	case "set":
 		h.bearSet(s, i)
+	case "disable":
+		h.bearDisable(s, i)
 	case "channel":
 		h.bearChannel(s, i)
 	default:
@@ -234,8 +254,31 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 		SetBy:   i.Member.User.ID,
 		SetAt:   time.Now(),
 		Next:    setTime,
+		RemindersEnabled: true,
 	}
 	replyWithEmbed(s, i, bearStatusEmbed(status, "Bear trap configured", userName(s, status.SetBy)))
+}
+
+func (h *BearHandler) bearDisable(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if !canConfigureGuild(i.Member) {
+		reply(s, i, "You need Manage Server permission to disable bear reminders.")
+		return
+	}
+
+	trapID := i.ApplicationCommandData().Options[0].Options[0].StringValue()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	defer cancel()
+	if err := h.svc.DisableBearReminders(ctx, i.GuildID, trapID); err != nil {
+		slog.Info("failed to disable bear reminders", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
+		if errors.Is(err, kingshot.ErrNotFound) {
+			reply(s, i, fmt.Sprintf("Bear trap %s has not been configured yet.", trapID))
+			return
+		}
+		reply(s, i, "Failed to disable bear reminders - please try again later.")
+		return
+	}
+
+	reply(s, i, fmt.Sprintf("Bear reminders disabled for trap %s.", trapID))
 }
 
 func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -317,6 +360,10 @@ func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *di
 			IconURL: thumbnailURL,
 		},
 		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:  "Reminders",
+				Value: status.Reminders(),
+			},
 			{
 				Name:  "Next Bear At:",
 				Value: next,

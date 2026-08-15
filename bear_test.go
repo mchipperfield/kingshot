@@ -29,7 +29,19 @@ func (s *memoryBearStore) SetBear(_ context.Context, guildID, bearID string, set
 		SetAt:   time.Now(),
 		SetBy:   setBy,
 		Next:    setTime,
+		RemindersEnabled: true,
 	}
+	return nil
+}
+
+func (s *memoryBearStore) SetBearRemindersEnabled(_ context.Context, guildID, bearID string, enabled bool) error {
+	key := bearKey(guildID, bearID)
+	status, found := s.statuses[key]
+	if !found {
+		return ErrNotFound
+	}
+	status.RemindersEnabled = enabled
+	s.statuses[key] = status
 	return nil
 }
 
@@ -70,11 +82,30 @@ func TestBearServiceSetAndGetBearWithoutCache(t *testing.T) {
 	}
 }
 
+func TestBearStatusReminders(t *testing.T) {
+	tests := []struct {
+		name   string
+		status BearStatus
+		want   string
+	}{
+		{name: "enabled", status: BearStatus{RemindersEnabled: true}, want: "Enabled"},
+		{name: "disabled", status: BearStatus{}, want: "Disabled"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.status.Reminders(); got != test.want {
+				t.Errorf("Reminders() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBearServiceTickPersistsNextBearTime(t *testing.T) {
 	store := newMemoryBearStore()
 	service := NewBearService(store)
 	previous := time.Now().Add(-time.Hour)
-	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: previous}
+	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: previous, RemindersEnabled: true}
 	store.statuses[bearKey(status.GuildID, status.Bear)] = status
 
 	if err := service.tick(context.Background(), time.Now()); err != nil {
@@ -95,7 +126,7 @@ func TestBearServiceTickSendsReminderOncePerOccurrence(t *testing.T) {
 	store := newMemoryBearStore()
 	service := NewBearService(store)
 	now := time.Now()
-	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: now.Add(10 * time.Minute)}
+	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: now.Add(10 * time.Minute), RemindersEnabled: true}
 	store.statuses[bearKey(status.GuildID, status.Bear)] = status
 
 	if err := service.tick(context.Background(), now); err != nil {
@@ -116,6 +147,33 @@ func TestBearServiceTickSendsReminderOncePerOccurrence(t *testing.T) {
 	select {
 	case reminder := <-service.ReminderChannel():
 		t.Errorf("unexpected duplicate reminder: %#v", reminder)
+	default:
+	}
+}
+
+func TestBearServiceDisableBearReminders(t *testing.T) {
+	store := newMemoryBearStore()
+	service := NewBearService(store)
+	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: time.Now().Add(10 * time.Minute), RemindersEnabled: true}
+	store.statuses[bearKey(status.GuildID, status.Bear)] = status
+
+	if err := service.DisableBearReminders(context.Background(), status.GuildID, status.Bear); err != nil {
+		t.Fatalf("DisableBearReminders() error = %v", err)
+	}
+
+	got, err := service.GetBearStatus(context.Background(), status.GuildID, status.Bear)
+	if err != nil {
+		t.Fatalf("GetBearStatus() error = %v", err)
+	}
+	if got.RemindersEnabled {
+		t.Error("RemindersEnabled = true, want false")
+	}
+	if err := service.tick(context.Background(), time.Now()); err != nil {
+		t.Fatalf("tick() error = %v", err)
+	}
+	select {
+	case reminder := <-service.ReminderChannel():
+		t.Errorf("unexpected reminder for disabled bear: %#v", reminder)
 	default:
 	}
 }

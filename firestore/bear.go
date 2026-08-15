@@ -23,13 +23,14 @@ func NewBearStore(client *firestore.Client) *BearStore {
 }
 
 type bear struct {
-	Bear      string    `firestore:"bear"`
-	GuildID   string    `firestore:"guild_id"`
-	SetBy     string    `firestore:"set_by"`
-	SetAt     time.Time `firestore:"set_at"`
-	Next      time.Time `firestore:"next"`
-	CreatedAt time.Time `firestore:"created_at"`
-	UpdatedAt time.Time `firestore:"updated_at"`
+	Bear             string    `firestore:"bear"`
+	GuildID          string    `firestore:"guild_id"`
+	SetBy            string    `firestore:"set_by"`
+	SetAt            time.Time `firestore:"set_at"`
+	Next             time.Time `firestore:"next"`
+	RemindersEnabled bool      `firestore:"reminders_enabled"`
+	CreatedAt        time.Time `firestore:"created_at"`
+	UpdatedAt        time.Time `firestore:"updated_at"`
 }
 
 func (s *BearStore) GetBearStatus(ctx context.Context, guildId string, bearID string) (*kingshot.BearStatus, error) {
@@ -48,11 +49,12 @@ func (s *BearStore) GetBearStatus(ctx context.Context, guildId string, bearID st
 		return nil, fmt.Errorf("firestore: decode bear doc: %w", err)
 	}
 	return &kingshot.BearStatus{
-		Next:    b.Next,
-		SetBy:   b.SetBy,
-		SetAt:   b.SetAt,
-		Bear:    b.Bear,
-		GuildID: b.GuildID,
+		Next:             b.Next,
+		SetBy:            b.SetBy,
+		SetAt:            b.SetAt,
+		Bear:             b.Bear,
+		GuildID:          b.GuildID,
+		RemindersEnabled: b.RemindersEnabled,
 	}, nil
 }
 
@@ -66,13 +68,14 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 		}
 		if err != nil || docSnap == nil || !docSnap.Exists() {
 			b := bear{
-				Bear:      bearID,
-				GuildID:   guildId,
-				SetBy:     setBy,
-				SetAt:     now,
-				Next:      setTime,
-				CreatedAt: now,
-				UpdatedAt: now,
+				Bear:             bearID,
+				GuildID:          guildId,
+				SetBy:            setBy,
+				SetAt:            now,
+				Next:             setTime,
+				RemindersEnabled: true,
+				CreatedAt:        now,
+				UpdatedAt:        now,
 			}
 			err = tx.Set(docRef, b)
 			if err != nil {
@@ -84,6 +87,7 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 			{Path: "set_by", Value: setBy},
 			{Path: "set_at", Value: now},
 			{Path: "next", Value: setTime},
+			{Path: "reminders_enabled", Value: true},
 			{Path: "updated_at", Value: now},
 		}); err != nil {
 			return fmt.Errorf("firestore: update bear doc: %w", err)
@@ -93,6 +97,29 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 
 	if err != nil {
 		return fmt.Errorf("firestore: set bear transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *BearStore) SetBearRemindersEnabled(ctx context.Context, guildID, bearID string, enabled bool) error {
+	docRef := s.client.Collection("alliances").Doc(guildID).Collection("bears").Doc(bearID)
+	if err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		docSnap, err := tx.Get(docRef)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return kingshot.ErrNotFound
+			}
+			return fmt.Errorf("firestore: get bear doc: %w", err)
+		}
+		if !docSnap.Exists() {
+			return kingshot.ErrNotFound
+		}
+		return tx.Update(docRef, []firestore.Update{
+			{Path: "reminders_enabled", Value: enabled},
+			{Path: "updated_at", Value: time.Now().UTC()},
+		})
+	}); err != nil {
+		return fmt.Errorf("firestore: set bear reminders enabled transaction: %w", err)
 	}
 	return nil
 }
@@ -122,7 +149,7 @@ func (s *BearStore) UpdateBearNext(ctx context.Context, guildId, bearID string, 
 
 func (s *BearStore) GetAllBearStatuses(ctx context.Context) ([]kingshot.BearStatus, error) {
 	var bears []kingshot.BearStatus
-	iter := s.client.CollectionGroup("bears").Documents(ctx)
+	iter := s.client.CollectionGroup("bears").Where("reminders_enabled", "==", true).Documents(ctx)
 	defer iter.Stop()
 
 	for {
@@ -140,11 +167,12 @@ func (s *BearStore) GetAllBearStatuses(ctx context.Context) ([]kingshot.BearStat
 		}
 
 		bears = append(bears, kingshot.BearStatus{
-			Bear:    b.Bear,
-			GuildID: b.GuildID,
-			SetBy:   b.SetBy,
-			SetAt:   b.SetAt,
-			Next:    b.Next,
+			Bear:             b.Bear,
+			GuildID:          b.GuildID,
+			SetBy:            b.SetBy,
+			SetAt:            b.SetAt,
+			Next:             b.Next,
+			RemindersEnabled: b.RemindersEnabled,
 		})
 	}
 	return bears, nil

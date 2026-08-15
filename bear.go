@@ -25,11 +25,19 @@ func NewBearService(store BearStore) *BearService {
 }
 
 type BearStatus struct {
-	Bear    string
-	SetAt   time.Time
-	SetBy   string
-	Next    time.Time
-	GuildID string
+	Bear             string
+	SetAt            time.Time
+	SetBy            string
+	Next             time.Time
+	GuildID          string
+	RemindersEnabled bool
+}
+
+func (s BearStatus) Reminders() string {
+	if s.RemindersEnabled {
+		return "Enabled"
+	}
+	return "Disabled"
 }
 
 var (
@@ -60,6 +68,20 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	return nil
 }
 
+func (s *BearService) DisableBearReminders(ctx context.Context, guildID, bearID string) error {
+	if bearID != "1" && bearID != "2" {
+		return ErrInvalidBear
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.store.SetBearRemindersEnabled(ctx, guildID, bearID, false); err != nil {
+		return fmt.Errorf("kingshot: disable bear reminders: %w", err)
+	}
+	delete(s.sentReminders, bearKey(guildID, bearID))
+	return nil
+}
+
 type Reminder struct {
 	BearID  string
 	GuildID string
@@ -73,6 +95,7 @@ const bearInterval time.Duration = 48 * time.Hour
 func (s *BearService) Start(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
+	slog.Info("bear reminder scheduler started", "interval", time.Minute)
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,6 +122,9 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 	}
 
 	for _, status := range statuses {
+		if !status.RemindersEnabled {
+			continue
+		}
 		key := bearKey(status.GuildID, status.Bear)
 		if !status.Next.After(now) {
 			steps := int64(now.Sub(status.Next)/bearInterval) + 1
@@ -106,6 +132,7 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			if err := s.store.UpdateBearNext(ctx, status.GuildID, status.Bear, next); err != nil {
 				return fmt.Errorf("update bear next: %w", err)
 			}
+			slog.Info("bear event advanced", "guild_id", status.GuildID, "bear_id", status.Bear, "next", next)
 			status.Next = next
 			delete(s.sentReminders, key)
 		}
@@ -119,6 +146,7 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			select {
 			case s.reminderChan <- reminder:
 				s.sentReminders[key] = status.Next
+				slog.Info("bear reminder queued", "guild_id", status.GuildID, "bear_id", status.Bear, "next", status.Next)
 			default:
 			}
 		}

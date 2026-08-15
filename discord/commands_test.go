@@ -30,6 +30,9 @@ func TestBearCommands(t *testing.T) {
 	if commands[0].Type != discordgo.ChatApplicationCommand || commands[0].Name != "bear" {
 		t.Fatalf("got command %#v, want bear chat command", commands[0])
 	}
+	if len(commands[0].Options) != 4 || commands[0].Options[2].Name != "disable" {
+		t.Fatalf("expected bear disable subcommand, got %v", commands[0].Options)
+	}
 }
 
 func TestCanConfigureGuild(t *testing.T) {

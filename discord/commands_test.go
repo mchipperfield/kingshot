@@ -32,19 +32,20 @@ func TestBearCommands(t *testing.T) {
 	}
 }
 
-func TestCanConfigureBearChannel(t *testing.T) {
+func TestCanConfigureGuild(t *testing.T) {
 	for _, test := range []struct {
 		name        string
-		permissions int64
+		member      *discordgo.Member
 		want        bool
 	}{
-		{name: "administrator", permissions: discordgo.PermissionAdministrator, want: true},
-		{name: "manage guild", permissions: discordgo.PermissionManageGuild, want: true},
-		{name: "regular member", permissions: 0, want: false},
+		{name: "administrator", member: &discordgo.Member{Permissions: discordgo.PermissionAdministrator}, want: true},
+		{name: "manage guild", member: &discordgo.Member{Permissions: discordgo.PermissionManageGuild}, want: true},
+		{name: "regular member", member: &discordgo.Member{}, want: false},
+		{name: "missing member", want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := canConfigureBearChannel(test.permissions); got != test.want {
-				t.Errorf("canConfigureBearChannel() = %t, want %t", got, test.want)
+			if got := canConfigureGuild(test.member); got != test.want {
+				t.Errorf("canConfigureGuild() = %t, want %t", got, test.want)
 			}
 		})
 	}

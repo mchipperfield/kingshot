@@ -189,6 +189,10 @@ func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionC
 }
 
 func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if !canConfigureGuild(i.Member) {
+		reply(s, i, "You need Manage Server permission to set the bear trap.")
+		return
+	}
 	data := i.ApplicationCommandData()
 	subcommand := data.Options[0]
 	trapID := subcommand.Options[0].StringValue()
@@ -229,7 +233,7 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 }
 
 func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Member == nil || !canConfigureBearChannel(i.Member.Permissions) {
+	if !canConfigureGuild(i.Member) {
 		reply(s, i, "You need Manage Server permission to set the bear reminder channel.")
 		return
 	}
@@ -275,8 +279,8 @@ func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.Interaction
 	reply(s, i, fmt.Sprintf("Bear reminder channel set to <#%s>.", channel.ID))
 }
 
-func canConfigureBearChannel(permissions int64) bool {
-	return permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0
+func canConfigureGuild(member *discordgo.Member) bool {
+	return member != nil && member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0
 }
 
 func userName(s *discordgo.Session, userID string) string {

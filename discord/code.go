@@ -516,6 +516,10 @@ func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCr
 		slog.Error("received malformed code channel interaction")
 		return
 	}
+	if !canConfigureGuild(i.Member) {
+		reply(s, i, "You need Manage Server permission to set the redemption channel.")
+		return
+	}
 	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code channel") {
 		return
 	}

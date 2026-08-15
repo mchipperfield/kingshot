@@ -12,6 +12,9 @@
 - Automatically redeem active codes when a new player registers.
 - Keep active and expired codes in Firestore to prevent duplicate processing.
 - Post redemption results to each affected Discord guild.
+- Configure bear trap schedules and view their current status.
+- Send bear reminders before each scheduled event, with a per-trap reminder channel.
+- Disable bear reminders without deleting the configured bear schedule.
 
 ## Discord commands
 
@@ -23,6 +26,10 @@
 | `/player unlink player-id:<id>` | Confirm and remove the link, excluding the player from future redemptions. |
 | `/code redeem code:<gift-code>` | Validate a gift code and redeem it for all active players. |
 | `/code channel channel:<channel>` | Set the channel where gift-code redemption results are posted. |
+| `/bear status trap:<1\|2>` | Show a bear trap's next event, configured-by user, and reminder state. |
+| `/bear set trap:<1\|2> date:<YYYY-MM-DD> time:<HH:MM>` | Set the next bear event in UTC and enable reminders. Requires Manage Server or Administrator permission. |
+| `/bear disable trap:<1\|2>` | Disable reminders for a bear trap while retaining its configured schedule. Requires Manage Server or Administrator permission. |
+| `/bear channel channel:<channel>` | Set the channel for bear reminders. Requires Manage Server or Administrator permission. |
 
 Commands are registered globally. Discord can take time to propagate global command changes.
 
@@ -53,17 +60,26 @@ The executable in `cmd/discord` performs the startup wiring:
 
 The service serializes mutations with a mutex. Its KingShot HTTP client has a 10-second timeout and limits requests to one every two seconds.
 
-When `/code` succeeds, results are grouped by the guild where each player registered. The bot posts each report to the guild's system channel, then its public-updates channel, or finally its first text channel.
+When `/code` succeeds, results are grouped by the guild where each player registered. The bot posts each report to the configured redemption channel when available; otherwise it uses the guild's system channel, then public-updates channel, or finally the first text/news channel where it has permission to post.
+
+## Bear reminders
+
+Bear schedules are stored in Firestore and cached in memory. The scheduler checks enabled schedules every minute. When an event has passed, it advances the stored next event by exact 48-hour intervals from the previous event time, avoiding schedule drift. About 30 minutes before an event, it sends one reminder to the configured bear channel, or an available guild fallback channel when none is configured.
+
+`/bear set` always enables reminders for the selected trap. `/bear disable` leaves the next scheduled time intact but removes that trap from reminder scheduling. `/bear status` continues to show disabled traps and their retained schedule.
 
 ## Project structure
 
 ```text
 .
 ├── api.go                    # KingShot API payload signing and redemption client
+├── bear.go                   # Bear scheduling and reminder service
 ├── service.go                # Registration, transfer, unlink, and code workflows
 ├── result.go                 # Structured service results
 ├── store.go                  # PlayerStore and CodeStore contracts
 ├── in_memory_code_store.go   # Default non-persistent CodeStore
+├── store/
+│   └── inmem.go              # Cached BearStore wrapper
 ├── api/
 │   ├── cookies.go             # OAuth state and privacy session cookies
 │   └── handler.go             # Privacy deletion HTTP handlers
@@ -79,6 +95,7 @@ When `/code` succeeds, results are grouped by the guild where each player regist
 │   ├── service.go            # Firestore client construction
 │   ├── player.go             # Firestore PlayerStore
 │   ├── code.go               # Firestore CodeStore
+│   ├── bear.go               # Firestore BearStore
 │   ├── alliance.go            # Firestore AllianceStore
 │   └── privacy.go             # Firestore privacy deletion service
 ├── PRIVACY.md                # Privacy policy

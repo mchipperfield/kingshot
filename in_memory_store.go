@@ -49,12 +49,24 @@ func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) err
 }
 
 type inMemoryAllianceStore struct {
+	channels map[string]map[ChannelKind]string
 }
 
-func (s *inMemoryAllianceStore) SetRedemptionChannel(ctx context.Context, req *SetChannelRequest) error {
+func (s *inMemoryAllianceStore) SetChannel(ctx context.Context, kind ChannelKind, req *SetChannelRequest) error {
+	if s.channels[req.GuildId] == nil {
+		s.channels[req.GuildId] = make(map[ChannelKind]string)
+	}
+	s.channels[req.GuildId][kind] = req.ChannelId
 	return nil
 }
 
+func (s *inMemoryAllianceStore) GetChannel(ctx context.Context, kind ChannelKind, guildId string) (string, error) {
+	if channelID := s.channels[guildId][kind]; channelID != "" {
+		return channelID, nil
+	}
+	return "", ErrNotFound
+}
+
 func NewAllianceStore() *inMemoryAllianceStore {
-	return &inMemoryAllianceStore{}
+	return &inMemoryAllianceStore{channels: make(map[string]map[ChannelKind]string)}
 }

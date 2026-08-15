@@ -9,11 +9,11 @@ import (
 )
 
 type BearStore struct {
-	cache          map[string]cacheEntry
-	mu             sync.RWMutex
-	ttl            time.Duration
-	allExpiresAt   time.Time
-	store          kingshot.BearStore
+	cache        map[string]cacheEntry
+	mu           sync.RWMutex
+	ttl          time.Duration
+	allExpiresAt time.Time
+	store        kingshot.BearStore
 }
 
 type cacheEntry struct {
@@ -70,6 +70,22 @@ func (s *BearStore) SetBear(ctx context.Context, guildId, bearID string, setTime
 			GuildID: guildId,
 		},
 		expiresAt: now.Add(s.ttl),
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *BearStore) UpdateBearNext(ctx context.Context, guildId, bearID string, next time.Time) error {
+	if err := s.store.UpdateBearNext(ctx, guildId, bearID, next); err != nil {
+		return err
+	}
+
+	key := guildId + "/" + bearID
+	s.mu.Lock()
+	if entry, found := s.cache[key]; found {
+		entry.status.Next = next
+		entry.expiresAt = time.Now().Add(s.ttl)
+		s.cache[key] = entry
 	}
 	s.mu.Unlock()
 	return nil

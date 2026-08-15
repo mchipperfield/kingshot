@@ -97,6 +97,29 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 	return nil
 }
 
+func (s *BearStore) UpdateBearNext(ctx context.Context, guildId, bearID string, next time.Time) error {
+	docRef := s.client.Collection("alliances").Doc(guildId).Collection("bears").Doc(bearID)
+	if err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		docSnap, err := tx.Get(docRef)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return kingshot.ErrNotFound
+			}
+			return fmt.Errorf("firestore: get bear doc: %w", err)
+		}
+		if !docSnap.Exists() {
+			return kingshot.ErrNotFound
+		}
+		return tx.Update(docRef, []firestore.Update{
+			{Path: "next", Value: next},
+			{Path: "updated_at", Value: time.Now().UTC()},
+		})
+	}); err != nil {
+		return fmt.Errorf("firestore: update bear next transaction: %w", err)
+	}
+	return nil
+}
+
 func (s *BearStore) GetAllBearStatuses(ctx context.Context) ([]kingshot.BearStatus, error) {
 	var bears []kingshot.BearStatus
 	iter := s.client.CollectionGroup("bears").Documents(ctx)

@@ -52,6 +52,16 @@ func (s *recordingBearStore) SetBear(_ context.Context, guildID, bearID string, 
 	return nil
 }
 
+func (s *recordingBearStore) UpdateBearNext(_ context.Context, guildID, bearID string, next time.Time) error {
+	status, found := s.statuses[bearKey(guildID, bearID)]
+	if !found {
+		return kingshot.ErrNotFound
+	}
+	status.Next = next
+	s.statuses[bearKey(guildID, bearID)] = status
+	return nil
+}
+
 func (s *recordingBearStore) GetAllBearStatuses(_ context.Context) ([]kingshot.BearStatus, error) {
 	s.getAllCalls++
 	statuses := make([]kingshot.BearStatus, 0, len(s.statuses))

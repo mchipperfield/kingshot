@@ -87,10 +87,12 @@ func (s *BearService) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-ticker.C:
-				if err := s.loadBears(ctx); err != nil {
-					return fmt.Errorf("kingshot: refresh bears: %w", err)
-				}
-			s.tick(now)
+			if err := s.loadBears(ctx); err != nil {
+				return fmt.Errorf("kingshot: refresh bears: %w", err)
+			}
+			if err := s.tick(ctx, now); err != nil {
+				return fmt.Errorf("kingshot: advance bears: %w", err)
+			}
 		}
 	}
 }
@@ -99,14 +101,18 @@ func (s *BearService) ReminderChannel() <-chan Reminder {
 	return s.reminderChan
 }
 
-func (s *BearService) tick(now time.Time) {
+func (s *BearService) tick(ctx context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, bear := range s.bears {
-		if bear.status.Next.Before(now) {
+		if !bear.status.Next.After(now) {
 			steps := int64(now.Sub(bear.status.Next)/bearInterval) + 1
-			bear.status.Next = bear.status.Next.Add(time.Duration(steps) * bearInterval)
+			next := bear.status.Next.Add(time.Duration(steps) * bearInterval)
+			if err := s.store.UpdateBearNext(ctx, bear.status.GuildID, bear.status.Bear, next); err != nil {
+				return fmt.Errorf("update bear next: %w", err)
+			}
+			bear.status.Next = next
 			bear.sent = false
 		}
 		if bear.status.Next.Sub(now) < time.Minute*30 && !bear.sent {
@@ -120,6 +126,7 @@ func (s *BearService) tick(now time.Time) {
 		}
 
 	}
+	return nil
 }
 
 func (s *BearService) loadBears(ctx context.Context) error {

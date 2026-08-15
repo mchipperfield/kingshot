@@ -14,6 +14,7 @@ type BearService struct {
 	bears        map[string]*scheduledBear
 	reminderChan chan Reminder
 	mu           sync.Mutex
+	storeMu      sync.Mutex
 }
 
 type scheduledBear struct {
@@ -54,17 +55,23 @@ func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTi
 	if bearID != "1" && bearID != "2" {
 		return ErrInvalidBear
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storeMu.Lock()
+	defer s.storeMu.Unlock()
+
 	err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
 	if err != nil {
 		return fmt.Errorf("kingshot: set bear: %w", err)
 	}
-	s.upsertBear(BearStatus{
+	status := BearStatus{
 		Bear:    bearID,
 		GuildID: guildId,
 		SetBy:   setBy,
 		SetAt:   time.Now(),
 		Next:    setTime,
-	})
+	}
+	s.upsertBearLocked(status)
 	return nil
 }
 
@@ -94,7 +101,6 @@ func (s *BearService) Start(ctx context.Context) error {
 			}
 			if err := s.tick(ctx, now); err != nil {
 				slog.Info("kingshot: tick bears", "error", err)
-				continue
 			}
 		}
 	}
@@ -112,9 +118,12 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 		if !bear.status.Next.After(now) {
 			steps := int64(now.Sub(bear.status.Next)/bearInterval) + 1
 			next := bear.status.Next.Add(time.Duration(steps) * bearInterval)
+			s.storeMu.Lock()
 			if err := s.store.UpdateBearNext(ctx, bear.status.GuildID, bear.status.Bear, next); err != nil {
+				s.storeMu.Unlock()
 				return fmt.Errorf("update bear next: %w", err)
 			}
+			s.storeMu.Unlock()
 			bear.status.Next = next
 			bear.sent = false
 		}
@@ -145,9 +154,13 @@ func (s *BearService) loadBears(ctx context.Context) error {
 }
 
 func (s *BearService) upsertBear(status BearStatus) {
-	key := status.GuildID + "/" + status.Bear
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.upsertBearLocked(status)
+}
+
+func (s *BearService) upsertBearLocked(status BearStatus) {
+	key := status.GuildID + "/" + status.Bear
 
 	if existing, found := s.bears[key]; found && existing.status.Next.Equal(status.Next) {
 		existing.status = status

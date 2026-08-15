@@ -13,8 +13,59 @@ import (
 const discordMaxMessageLen = 1900
 
 const (
-	thumbnailURL = "https://matthewchipperfield.dev/public/images/gopherize.png"
+	thumbnailURL   = "https://matthewchipperfield.dev/public/images/gopherize.png"
+	embedColor     = 11261619
+	maxEmbedFields = 25
 )
+
+func registrationEmbed(result kingshot.RegisterResult) *discordgo.MessageEmbed {
+	embed := &discordgo.MessageEmbed{
+		Title:       "Player Registered",
+		Description: "Your player is ready for gift-code redemptions.",
+		Color:       embedColor,
+		Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
+		Author: &discordgo.MessageEmbedAuthor{
+			Name:    "Goaf's Herald",
+			IconURL: thumbnailURL,
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{Name: "Player ID", Value: fmt.Sprintf("`%s`", result.PlayerID), Inline: true},
+		},
+	}
+	for _, codeResult := range result.CodeResults {
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:  fmt.Sprintf("Code %s", codeResult.Code),
+			Value: codeResult.Message,
+		})
+	}
+	return embed
+}
+
+func redemptionEmbeds(code string, results []kingshot.PlayerRedeemResult) []*discordgo.MessageEmbed {
+	embeds := make([]*discordgo.MessageEmbed, 0, (len(results)+maxEmbedFields-1)/maxEmbedFields)
+	for start := 0; start < len(results); start += maxEmbedFields {
+		end := min(start+maxEmbedFields, len(results))
+		embed := &discordgo.MessageEmbed{
+			Title:       fmt.Sprintf("Gift Code %s", code),
+			Description: fmt.Sprintf("Redemption results for %d player(s).", len(results)),
+			Color:       embedColor,
+			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
+			Author: &discordgo.MessageEmbedAuthor{
+				Name:    "Goaf's Herald",
+				IconURL: thumbnailURL,
+			},
+		}
+		for _, result := range results[start:end] {
+			embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+				Name:   fmt.Sprintf("Player %s", result.PlayerID),
+				Value:  result.Message,
+				Inline: true,
+			})
+		}
+		embeds = append(embeds, embed)
+	}
+	return embeds
+}
 
 // formatCodeResult formats a CodeResult as a Discord-ready message string.
 func formatCodeResult(r kingshot.CodeResult) string {

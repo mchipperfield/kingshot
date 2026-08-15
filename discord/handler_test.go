@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -275,6 +276,44 @@ func TestFormatRegisterResult_WithCodeResults(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("result missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRegistrationEmbed(t *testing.T) {
+	embed := registrationEmbed(kingshot.RegisterResult{
+		Success:  true,
+		PlayerID: "player-1",
+		CodeResults: []kingshot.ActiveCodeResult{
+			{Code: "CODE1", Message: "Redeemed successfully."},
+		},
+	})
+
+	if embed.Title != "Player Registered" {
+		t.Errorf("Title = %q, want Player Registered", embed.Title)
+	}
+	if len(embed.Fields) != 2 {
+		t.Fatalf("field count = %d, want 2", len(embed.Fields))
+	}
+	if embed.Fields[0].Value != "`player-1`" || embed.Fields[1].Name != "Code CODE1" {
+		t.Errorf("unexpected fields: %#v", embed.Fields)
+	}
+}
+
+func TestRedemptionEmbedsBatchesPlayers(t *testing.T) {
+	results := make([]kingshot.PlayerRedeemResult, maxEmbedFields+1)
+	for index := range results {
+		results[index] = kingshot.PlayerRedeemResult{
+			PlayerID: fmt.Sprintf("player-%d", index),
+			Message:  "Redeemed successfully.",
+		}
+	}
+
+	embeds := redemptionEmbeds("CODE1", results)
+	if len(embeds) != 2 {
+		t.Fatalf("embed count = %d, want 2", len(embeds))
+	}
+	if len(embeds[0].Fields) != maxEmbedFields || len(embeds[1].Fields) != 1 {
+		t.Errorf("field counts = %d, %d; want %d, 1", len(embeds[0].Fields), len(embeds[1].Fields), maxEmbedFields)
 	}
 }
 

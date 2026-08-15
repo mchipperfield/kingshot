@@ -230,6 +230,10 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 
 	result := svc.RegisterPlayer(ctx, req)
+	if result.Success {
+		replyWithEmbed(s, i, registrationEmbed(result))
+		return
+	}
 	reply(s, i, formatRegisterResult(result))
 }
 
@@ -428,17 +432,19 @@ func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store
 		guildResults := grouped[guildID]
 		channelID := guildChannel(ctx, s, store, kingshot.RedemptionChannel, guildID)
 
-		lines := make([]string, 0, len(guildResults))
-		for _, result := range guildResults {
-			lines = append(lines, fmt.Sprintf("Player `%s`: %s", result.PlayerID, result.Message))
-		}
-		message := formatRedemptionReport(code, len(guildResults), lines)
 		if channelID == "" {
 			slog.Error("no available channel for guild redemption results", "guild_id", guildID, "code", code)
 			continue
 		}
-		if _, err := s.ChannelMessageSend(channelID, message); err != nil {
-			slog.Error("failed to post guild redemption results", "error", err, "guild_id", guildID, "channel_id", channelID, "code", code)
+		posted := true
+		for _, embed := range redemptionEmbeds(code, guildResults) {
+			if _, err := s.ChannelMessageSendEmbed(channelID, embed); err != nil {
+				slog.Error("failed to post guild redemption results", "error", err, "guild_id", guildID, "channel_id", channelID, "code", code)
+				posted = false
+				break
+			}
+		}
+		if !posted {
 			continue
 		}
 		postedGuilds = append(postedGuilds, guildID)

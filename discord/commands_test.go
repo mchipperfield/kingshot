@@ -35,7 +35,7 @@ func TestBearCommands(t *testing.T) {
 	}
 }
 
-func TestCanConfigureGuild(t *testing.T) {
+func TestIsAdmin(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		member *discordgo.Member
@@ -47,8 +47,8 @@ func TestCanConfigureGuild(t *testing.T) {
 		{name: "missing member", want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := canConfigureGuild(test.member); got != test.want {
-				t.Errorf("canConfigureGuild() = %t, want %t", got, test.want)
+			if got := isAdmin(test.member); got != test.want {
+				t.Errorf("isAdmin() = %t, want %t", got, test.want)
 			}
 		})
 	}

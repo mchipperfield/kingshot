@@ -108,10 +108,9 @@ func (h *GiftCodeHandler) Commands() []*discordgo.ApplicationCommand {
 			},
 		},
 		{
-			Name:                     "code",
-			Description:              "Gift code redemption commands.",
-			Contexts:                 &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild},
-			DefaultMemberPermissions: permPointer(discordgo.PermissionAdministrator),
+			Name:        "code",
+			Description: "Gift code redemption commands.",
+			Contexts:    &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild},
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
@@ -158,15 +157,15 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 	}
 	switch i.Type {
 	case discordgo.InteractionApplicationCommand:
-		data := i.ApplicationCommandData()
-		if len(data.Options) == 0 {
-			slog.Error("received application command without options", "command", data.Name)
+		command := i.ApplicationCommandData()
+		if len(command.Options) == 0 {
+			slog.Error("received application command without options", "command", command.Name)
 			return
 		}
-		switch data.Name {
+		switch command.Name {
 		case "player":
-			subcommand := data.Options[0].Name
-			switch subcommand {
+			subcommand := command.Options[0]
+			switch subcommand.Name {
 			case "register":
 				handleRegisterPlayer(s, i, h.service)
 			case "status":
@@ -177,16 +176,19 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 				handleUnlinkPlayer(s, i)
 			}
 		case "code":
-			subcommand := data.Options[0].Name
-			switch subcommand {
+			subcommand := command.Options[0]
+			switch subcommand.Name {
 			case "redeem":
-				handleAddCode(s, i, h.service, h.store)
+				PermissionMw(h.store)(handleAddCode(h.service, h.store))(s, i)
 			case "channel":
-				handleSetRedemptionChannel(s, i, h.store)
+				PermissionMw(h.store)(handleSetRedemptionChannel(h.store))(s, i)
 			}
+		default:
+			return
 		}
 	case discordgo.InteractionMessageComponent:
 		handleUnlinkConfirmation(s, i, h.service)
+
 	}
 }
 
@@ -237,32 +239,34 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	reply(s, i, formatRegisterResult(result))
 }
 
-func handleAddCode(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) {
-	options := i.ApplicationCommandData().Options
-	if len(options) == 0 || len(options[0].Options) < 1 {
-		slog.Error("received malformed code redeem interaction")
-		return
-	}
-	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code redeem") {
-		return
-	}
+func handleAddCode(svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		options := i.ApplicationCommandData().Options
+		if len(options) == 0 || len(options[0].Options) < 1 {
+			slog.Error("received malformed code redeem interaction")
+			return
+		}
+		if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code redeem") {
+			return
+		}
 
-	newCode := options[0].Options[0].StringValue()
-	reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
+		newCode := options[0].Options[0].StringValue()
+		reply(s, i, fmt.Sprintf("Code %s received: processing per guild...", newCode))
 
-	ctx, cancel := context.WithTimeout(context.Background(), codeProcessingTimeout)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), codeProcessingTimeout)
+		defer cancel()
 
-	result := svc.ProcessNewCode(ctx, newCode)
-	if result.Added && len(result.PlayerResults) > 0 {
-		posted := postGuildRedemptionResults(ctx, s, allianceStore, result.Code, result.PlayerResults)
-		reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))
-		return
-	}
+		result := svc.ProcessNewCode(ctx, newCode)
+		if result.Added && len(result.PlayerResults) > 0 {
+			posted := postGuildRedemptionResults(ctx, s, allianceStore, result.Code, result.PlayerResults)
+			reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))
+			return
+		}
 
-	formatted := formatCodeResult(result)
-	for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
-		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
+		formatted := formatCodeResult(result)
+		for _, chunk := range chunkMessage(formatted, discordMaxMessageLen) {
+			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: chunk})
+		}
 	}
 }
 
@@ -516,64 +520,62 @@ func guildFindDefaultChannels(s *discordgo.Session, guildID string) ([]string, e
 	return channels, nil
 }
 
-func handleSetRedemptionChannel(s *discordgo.Session, i *discordgo.InteractionCreate, store kingshot.AllianceStore) {
-	options := i.ApplicationCommandData().Options
-	if len(options) == 0 || len(options[0].Options) < 1 {
-		slog.Error("received malformed code channel interaction")
-		return
-	}
-	if !canConfigureGuild(i.Member) {
-		reply(s, i, "You need Manage Server permission to set the redemption channel.")
-		return
-	}
-	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code channel") {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
-	defer cancel()
+func handleSetRedemptionChannel(store kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		options := i.ApplicationCommandData().Options
+		if len(options) == 0 || len(options[0].Options) < 1 {
+			slog.Error("received malformed code channel interaction")
+			return
+		}
 
-	if store == nil {
-		reply(s, i, "Unable to set redemption channel due to a database error.")
-		return
-	}
+		if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "code channel") {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+		defer cancel()
 
-	channel := options[0].Options[0].ChannelValue(s)
-	if channel == nil {
-		reply(s, i, "Invalid channel specified.")
-		return
-	}
+		if store == nil {
+			reply(s, i, "Unable to set redemption channel due to a database error.")
+			return
+		}
 
-	if channel.GuildID != i.GuildID {
-		reply(s, i, "The specified channel is not in this guild.")
-		return
-	}
+		channel := options[0].Options[0].ChannelValue(s)
+		if channel == nil {
+			reply(s, i, "Invalid channel specified.")
+			return
+		}
 
-	if channel.Type != discordgo.ChannelTypeGuildText && channel.Type != discordgo.ChannelTypeGuildNews {
-		reply(s, i, "The specified channel is not a supported text channel.")
-		return
-	}
+		if channel.GuildID != i.GuildID {
+			reply(s, i, "The specified channel is not in this guild.")
+			return
+		}
 
-	if !botHasPermission(s, channel.ID) {
-		reply(s, i, "The bot does not have permission to send messages to this channel.")
-		return
-	}
+		if channel.Type != discordgo.ChannelTypeGuildText && channel.Type != discordgo.ChannelTypeGuildNews {
+			reply(s, i, "The specified channel is not a supported text channel.")
+			return
+		}
 
-	req := kingshot.SetChannelRequest{
-		GuildId:   i.GuildID,
-		UserId:    i.Member.User.ID,
-		ChannelId: channel.ID,
-	}
+		if !botHasPermission(s, channel.ID) {
+			reply(s, i, "The bot does not have permission to send messages to this channel.")
+			return
+		}
 
-	if err := store.SetChannel(ctx, kingshot.RedemptionChannel, &req); err != nil {
-		slog.Error("failed to set redemption channel", "error", err, "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
-		reply(s, i, "Failed to set redemption channel.")
-		return
-	}
+		req := kingshot.SetChannelRequest{
+			GuildId:   i.GuildID,
+			UserId:    i.Member.User.ID,
+			ChannelId: channel.ID,
+		}
 
-	slog.Info("redemption channel set", "user_id", i.Member.User.ID, "channel_id", channel.ID, "guild_id", i.GuildID)
-	reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.ID))
+		if err := store.SetChannel(ctx, kingshot.RedemptionChannel, &req); err != nil {
+			slog.Error("failed to set redemption channel", "error", err, "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
+			reply(s, i, "Failed to set redemption channel.")
+			return
+		}
+
+		slog.Info("redemption channel set", "user_id", i.Member.User.ID, "channel_id", channel.ID, "guild_id", i.GuildID)
+		reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.ID))
+	}
 }
-
 func botHasPermission(s *discordgo.Session, channelID string) bool {
 	permissions, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
 	if err != nil {

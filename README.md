@@ -15,6 +15,7 @@
 - Configure bear trap schedules and view their current status.
 - Send bear reminders before each scheduled event, with a per-trap reminder channel.
 - Disable bear reminders without deleting the configured bear schedule.
+- Configure a minimum Discord role for bot management commands, with automatic access for higher roles and a Manage Server or Administrator fallback.
 
 ## Discord commands
 
@@ -27,11 +28,24 @@
 | `/code redeem code:<gift-code>` | Validate a gift code and redeem it for all active players. |
 | `/code channel channel:<channel>` | Set the channel where gift-code redemption results are posted. |
 | `/bear status trap:<1\|2>` | Show a bear trap's next event, configured-by user, and reminder state. |
-| `/bear set trap:<1\|2> date:<YYYY-MM-DD> time:<HH:MM>` | Set the next bear event in UTC and enable reminders. Requires Manage Server or Administrator permission. |
-| `/bear disable trap:<1\|2>` | Disable reminders for a bear trap while retaining its configured schedule. Requires Manage Server or Administrator permission. |
-| `/bear channel channel:<channel>` | Set the channel for bear reminders. Requires Manage Server or Administrator permission. |
+| `/bear set trap:<1\|2> date:<YYYY-MM-DD> time:<HH:MM>` | Set the next bear event in UTC and enable reminders. Requires the configured access role or a role above it; defaults to Manage Server or Administrator permission. |
+| `/bear disable trap:<1\|2>` | Disable reminders for a bear trap while retaining its configured schedule. Requires the configured access role or a role above it; defaults to Manage Server or Administrator permission. |
+| `/bear channel channel:<channel>` | Set the channel for bear reminders. Requires the configured access role or a role above it; defaults to Manage Server or Administrator permission. |
+| `/access view` | Show the configured minimum role for bot management commands. |
+| `/access set role:<role>` | Set the minimum role required to use bot management commands. |
+| `/access reset confirm:true` | Reset command access to the default Manage Server or Administrator requirement. |
 
 Commands are registered globally. Discord can take time to propagate global command changes.
+
+## Command access control
+
+Server administrators can use `/access set role:<role>` to configure the minimum role for bot management commands. Members with the selected role, or any role positioned above it in the server's role hierarchy, can use those commands. Members with Manage Server or Administrator permission always retain access.
+
+Use `/access view` to inspect the current setting and `/access reset confirm:true` to restore the default Manage Server or Administrator requirement.
+
+Access control deliberately uses a minimum position in Discord's role hierarchy rather than requiring administrators to select multiple roles, configure individual permissions, or create a dedicated bot role. This design prioritizes ease of use: existing server roles work without additional setup or ongoing role lists to maintain.
+
+This tradeoff means that every member with a role positioned at or above the configured role receives access, even when their particular role was not selected explicitly. That behavior may not suit every server, but it was chosen as the least burdensome of the available approaches. Place the configured role carefully within the server's role hierarchy.
 
 ## How the bot is wired
 

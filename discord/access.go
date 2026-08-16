@@ -31,12 +31,12 @@ func (h *AccessHandler) Commands() []*discordgo.ApplicationCommand {
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Name:        "view",
-					Description: "View who has permission to use the bots management commands.",
+					Description: "View who has permission to use the bot management commands.",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 				},
 				{
 					Name:        "set",
-					Description: "Set the minimum role required to use the bots management commands.",
+					Description: "Set the minimum role required to use the bot management commands.",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
@@ -49,7 +49,7 @@ func (h *AccessHandler) Commands() []*discordgo.ApplicationCommand {
 				},
 				{
 					Name:        "reset",
-					Description: "Reset access control to default settings (Guild Manager Permission)",
+					Description: "Reset access to Manage Server or Administrator permissions.",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
@@ -172,8 +172,12 @@ func (h *AccessHandler) set(s *discordgo.Session, i *discordgo.InteractionCreate
 			break
 		}
 	}
-	if role.ID != highest.ID && role.Position >= highest.Position {
-		reply(s, i, "You cannot configure access using a role equal to or higher than your highest role.")
+	if i.Member.User.ID != guild.OwnerID && highest == nil {
+		reply(s, i, "Unable to determine your highest role.")
+		return
+	}
+	if i.Member.User.ID != guild.OwnerID && role.ID != highest.ID && role.Position >= highest.Position {
+		reply(s, i, "You cannot configure access using a higher role or another role at the same position as your highest role.")
 		return
 	}
 
@@ -220,9 +224,17 @@ func (h *AccessHandler) reset(s *discordgo.Session, i *discordgo.InteractionCrea
 func PermissionMw(store kingshot.AllianceStore) func(func(*discordgo.Session, *discordgo.InteractionCreate)) func(*discordgo.Session, *discordgo.InteractionCreate) {
 	return func(next func(*discordgo.Session, *discordgo.InteractionCreate)) func(*discordgo.Session, *discordgo.InteractionCreate) {
 		return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-			if i == nil || i.Interaction == nil || i.Interaction.Member == nil {
+			if i == nil || i.Interaction == nil {
+				slog.Error("interaction is nil")
+				return
+			}
+			if s == nil {
+				slog.Error("Discord session is nil")
+				return
+			}
+			if i.Interaction.Member == nil {
 				slog.Error("interaction or member is nil")
-				respond(s, i, "Internal error: interaction or member is nil.")
+				respond(s, i, "Unable to verify your permissions.")
 				return
 			}
 
@@ -230,6 +242,11 @@ func PermissionMw(store kingshot.AllianceStore) func(func(*discordgo.Session, *d
 			// allow them to proceed.
 			if isAdmin(i.Member) {
 				next(s, i)
+				return
+			}
+			if store == nil {
+				slog.Error("alliance store is nil")
+				respond(s, i, "Failed to check access permissions. Try again later.")
 				return
 			}
 
@@ -286,6 +303,10 @@ func isAdmin(member *discordgo.Member) bool {
 }
 
 func respond(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
+	if s == nil || i == nil || i.Interaction == nil {
+		slog.Error("failed to respond: session or interaction is nil")
+		return
+	}
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{

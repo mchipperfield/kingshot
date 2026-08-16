@@ -195,6 +195,9 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 }
 
 func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "bear status") {
+		return
+	}
 	data := i.ApplicationCommandData()
 	subcommand := data.Options[0]
 	trapID := subcommand.Options[0].StringValue()
@@ -216,6 +219,9 @@ func (h *BearHandler) bearStatus(s *discordgo.Session, i *discordgo.InteractionC
 }
 
 func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "bear set") {
+		return
+	}
 	data := i.ApplicationCommandData()
 	subcommand := data.Options[0]
 	trapID := subcommand.Options[0].StringValue()
@@ -259,6 +265,9 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 }
 
 func (h *BearHandler) bearDisable(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "bear disable") {
+		return
+	}
 	trapID := i.ApplicationCommandData().Options[0].Options[0].StringValue()
 	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
@@ -276,6 +285,9 @@ func (h *BearHandler) bearDisable(s *discordgo.Session, i *discordgo.Interaction
 }
 
 func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "bear channel") {
+		return
+	}
 	if h.store == nil {
 		reply(s, i, "Unable to set bear reminder channel due to a database error.")
 		return

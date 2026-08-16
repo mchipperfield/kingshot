@@ -49,7 +49,8 @@ func (s *inMemoryCodeStore) RemoveActive(_ context.Context, codes ...string) err
 }
 
 type inMemoryAllianceStore struct {
-	channels map[string]map[ChannelKind]string
+	channels    map[string]map[ChannelKind]string
+	accessRoles map[string]string
 }
 
 func (s *inMemoryAllianceStore) SetChannel(ctx context.Context, kind ChannelKind, req *SetChannelRequest) error {
@@ -67,6 +68,25 @@ func (s *inMemoryAllianceStore) GetChannel(ctx context.Context, kind ChannelKind
 	return "", ErrNotFound
 }
 
+func (s *inMemoryAllianceStore) GetAccessRole(_ context.Context, guildId string) (string, error) {
+	if roleID := s.accessRoles[guildId]; roleID != "" {
+		return roleID, nil
+	}
+	return "", ErrNotFound
+}
+
+func (s *inMemoryAllianceStore) SetAccessRole(_ context.Context, guildId, roleId, _ string) error {
+	s.accessRoles[guildId] = roleId
+	return nil
+}
+
+func (s *inMemoryAllianceStore) ResetAccessRole(ctx context.Context, guildId, userId string) error {
+	return s.SetAccessRole(ctx, guildId, "", userId)
+}
+
 func NewAllianceStore() *inMemoryAllianceStore {
-	return &inMemoryAllianceStore{channels: make(map[string]map[ChannelKind]string)}
+	return &inMemoryAllianceStore{
+		channels:    make(map[string]map[ChannelKind]string),
+		accessRoles: make(map[string]string),
+	}
 }

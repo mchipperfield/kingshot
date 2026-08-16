@@ -158,15 +158,15 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 	}
 	switch i.Type {
 	case discordgo.InteractionApplicationCommand:
-		data := i.ApplicationCommandData()
-		if len(data.Options) == 0 {
-			slog.Error("received application command without options", "command", data.Name)
+		command := i.ApplicationCommandData()
+		if len(command.Options) == 0 {
+			slog.Error("received application command without options", "command", command.Name)
 			return
 		}
-		switch data.Name {
+		switch command.Name {
 		case "player":
-			subcommand := data.Options[0].Name
-			switch subcommand {
+			subcommand := command.Options[0]
+			switch subcommand.Name {
 			case "register":
 				handleRegisterPlayer(s, i, h.service)
 			case "status":
@@ -177,16 +177,19 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 				handleUnlinkPlayer(s, i)
 			}
 		case "code":
-			subcommand := data.Options[0].Name
-			switch subcommand {
+			subcommand := command.Options[0]
+			switch subcommand.Name {
 			case "redeem":
 				PermissionMw(handleAddCode(h.service, h.store))(s, i)
 			case "channel":
 				PermissionMw(handleSetRedemptionChannel(h.store))(s, i)
 			}
+		default:
+			return
 		}
 	case discordgo.InteractionMessageComponent:
 		handleUnlinkConfirmation(s, i, h.service)
+
 	}
 }
 

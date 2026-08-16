@@ -128,10 +128,10 @@ func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {
 	}
 }
 func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "bear status") {
+	command := i.ApplicationCommandData()
+	if command.Name != "bear" {
 		return
 	}
-	command := i.ApplicationCommandData()
 	subcommand := command.Options[0]
 	switch subcommand.Name {
 	case "status":

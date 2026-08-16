@@ -69,10 +69,12 @@ func main() {
 	bearService := kingshot.NewBearService(inmem.NewBearStore(firestore.NewBearStore(client)))
 
 	bearHandler := discord.NewBearHandler(bearService, allianceStore)
-	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler)
+	accessHandler := discord.NewAccessHandler(allianceStore)
+	commandRegistry := discord.NewCommandRegistry(giftCodeHandler, bearHandler, accessHandler)
 
 	session.AddHandler(giftCodeHandler.Handle)
 	session.AddHandler(bearHandler.Handle)
+	session.AddHandler(accessHandler.Handle)
 	session.AddHandler(commandRegistry.HandleReady)
 	// startReminders is called once when the bot is ready,
 	// and starts a goroutine to listen for reminders from the BearService and send them to the appropriate guild channels.

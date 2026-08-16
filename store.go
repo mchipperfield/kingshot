@@ -63,6 +63,9 @@ type CodeStore interface {
 type AllianceStore interface {
 	SetChannel(ctx context.Context, kind ChannelKind, req *SetChannelRequest) error
 	GetChannel(ctx context.Context, kind ChannelKind, guildId string) (string, error)
+	GetAccessRole(ctx context.Context, guildId string) (string, error)
+	SetAccessRole(ctx context.Context, guildId, roleId, userId string) error
+	ResetAccessRole(ctx context.Context, guildId string, userId string) error
 }
 
 type ChannelKind string

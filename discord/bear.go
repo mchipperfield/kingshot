@@ -137,11 +137,11 @@ func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreat
 	case "status":
 		h.bearStatus(s, i)
 	case "set":
-		PermissionMw(h.bearSet)(s, i)
+		PermissionMw(h.store)(h.bearSet)(s, i)
 	case "disable":
-		PermissionMw(h.bearDisable)(s, i)
+		PermissionMw(h.store)(h.bearDisable)(s, i)
 	case "channel":
-		PermissionMw(h.bearChannel)(s, i)
+		PermissionMw(h.store)(h.bearChannel)(s, i)
 	default:
 		slog.Warn("unrecognised bear subcommand", "subcommand", subcommand.Name)
 		reply(s, i, fmt.Sprintf("Unrecognised bear subcommand %q", subcommand.Name))

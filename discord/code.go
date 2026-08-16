@@ -180,9 +180,9 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 			subcommand := command.Options[0]
 			switch subcommand.Name {
 			case "redeem":
-				PermissionMw(handleAddCode(h.service, h.store))(s, i)
+				PermissionMw(h.store)(handleAddCode(h.service, h.store))(s, i)
 			case "channel":
-				PermissionMw(handleSetRedemptionChannel(h.store))(s, i)
+				PermissionMw(h.store)(handleSetRedemptionChannel(h.store))(s, i)
 			}
 		default:
 			return

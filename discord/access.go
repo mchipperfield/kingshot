@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
@@ -83,7 +84,8 @@ func (h *AccessHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCre
 		case "view":
 			h.view(s, i)
 		case "set":
-			h.set(s, i)
+			PermissionMw(h.store)(h.set)(s, i)
+
 		case "reset":
 			h.reset(s, i)
 		default:
@@ -197,26 +199,84 @@ func (h *AccessHandler) reset(s *discordgo.Session, i *discordgo.InteractionCrea
 
 // PermissionMw is a middleware function that checks if the user has the required permissions to execute a command.
 // Here we can centralize the permission checking logic and apply it to any command that requires it.
-func PermissionMw(next func(s *discordgo.Session, i *discordgo.InteractionCreate)) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
-		// 1) Check if the user has the required permissions to execute the command
-		// For now its a simple check for Administrator or Manage Guild permissions, but will be extended to be a configurable setting.
-		if !canConfigureGuild(i.Member) {
-			// 2) If they don't, respond with an ephemeral message indicating they don't have permission.
-			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: "You do not have permission to execute this command.",
-					Flags:   discordgo.MessageFlagsEphemeral,
-				},
-			})
-			return
+
+func PermissionMw(store kingshot.AllianceStore) func(func(*discordgo.Session, *discordgo.InteractionCreate)) func(*discordgo.Session, *discordgo.InteractionCreate) {
+	return func(next func(*discordgo.Session, *discordgo.InteractionCreate)) func(*discordgo.Session, *discordgo.InteractionCreate) {
+		return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			if i == nil || i.Interaction == nil || i.Interaction.Member == nil {
+				slog.Error("interaction or member is nil")
+				respond(s, i, "Internal error: interaction or member is nil.")
+				return
+			}
+
+			// If user is administrator or manage guild permissions, no need for guild specific role checks,
+			// allow them to proceed.
+			if isAdmin(i.Member) {
+				next(s, i)
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			roleID, err := store.GetAccessRole(ctx, i.GuildID)
+			if err != nil {
+				if errors.Is(err, kingshot.ErrNotFound) {
+					// No access role set, allow default permissions (admin or manage guild)
+					respond(s, i, "No access role set for your guild, you must have Manage Guild permissions.")
+					return
+				}
+				slog.Error("Failed to get access role", "guildID", i.GuildID, "error", err)
+				respond(s, i, "Failed to check access permissions. Try again later.")
+				return
+			}
+
+			// check that the role still exists in the guild.
+			guildRoles, err := s.GuildRoles(i.GuildID)
+			if err != nil {
+				slog.Error("Failed to lookup guild information", "guildID", i.GuildID, "error", err)
+				respond(s, i, "Failed to lookup guild information. Try again later.")
+				return
+			}
+			var requiredRole *discordgo.Role
+
+			if !slices.ContainsFunc(guildRoles, func(r *discordgo.Role) bool {
+				if r.ID == roleID {
+					requiredRole = r
+					return true
+				}
+				return false
+			}) {
+				respond(s, i, "The specified role no longer exists in this guild.")
+				return
+			}
+			if slices.ContainsFunc(i.Member.Roles, func(r string) bool {
+				return slices.ContainsFunc(guildRoles, func(gr *discordgo.Role) bool {
+					return (gr.ID == r) && (gr.Position >= requiredRole.Position)
+				})
+			}) {
+				// If they do, call the next handler in the chain.
+				next(s, i)
+				return
+			}
+			respond(s, i, "You do not have the required role to execute this command.")
 		}
-		// 3) If they do, call the next handler in the chain.
-		next(s, i)
 	}
 }
 
-func canConfigureGuild(member *discordgo.Member) bool {
+func isAdmin(member *discordgo.Member) bool {
 	return member != nil && member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0
+}
+
+func respond(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: msg,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+	if err != nil {
+		slog.Error("failed to respond to permission check", "error", err)
+	}
 }

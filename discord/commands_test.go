@@ -47,7 +47,7 @@ func TestCanConfigureGuild(t *testing.T) {
 		{name: "missing member", want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := canConfigureGuild(test.member); got != test.want {
+			if got := isAdmin(test.member); got != test.want {
 				t.Errorf("canConfigureGuild() = %t, want %t", got, test.want)
 			}
 		})

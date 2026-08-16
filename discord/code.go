@@ -108,10 +108,9 @@ func (h *GiftCodeHandler) Commands() []*discordgo.ApplicationCommand {
 			},
 		},
 		{
-			Name:                     "code",
-			Description:              "Gift code redemption commands.",
-			Contexts:                 &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild},
-			DefaultMemberPermissions: permPointer(discordgo.PermissionAdministrator),
+			Name:        "code",
+			Description: "Gift code redemption commands.",
+			Contexts:    &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild},
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,

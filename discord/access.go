@@ -87,7 +87,7 @@ func (h *AccessHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCre
 			PermissionMw(h.store)(h.set)(s, i)
 
 		case "reset":
-			h.reset(s, i)
+			PermissionMw(h.store)(h.reset)(s, i)
 		default:
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -133,7 +133,7 @@ func (h *AccessHandler) view(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
-	reply(s, i, "Role set to: <@&"+roleId+">.")
+	reply(s, i, "The current access role is set to: <@&"+roleId+">.")
 }
 
 func (h *AccessHandler) set(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -157,6 +157,23 @@ func (h *AccessHandler) set(s *discordgo.Session, i *discordgo.InteractionCreate
 		return r.ID == role.ID
 	}) {
 		reply(s, i, "The specified role does not exist in this guild.")
+		return
+	}
+
+	var highest *discordgo.Role
+	for _, memberRoleID := range i.Interaction.Member.Roles {
+		for _, guildRole := range guild.Roles {
+			if guildRole.ID != memberRoleID {
+				continue
+			}
+			if highest == nil || guildRole.Position > highest.Position {
+				highest = guildRole
+			}
+			break
+		}
+	}
+	if role.ID != highest.ID && role.Position >= highest.Position {
+		reply(s, i, "You cannot configure access using a role equal to or higher than your highest role.")
 		return
 	}
 

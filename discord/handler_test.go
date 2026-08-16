@@ -34,8 +34,8 @@ func TestGiftCodeCommands(t *testing.T) {
 	}
 
 	codeCommand := commands["code"]
-	if codeCommand.DefaultMemberPermissions == nil || *codeCommand.DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Errorf("expected /code to default to administrator permission")
+	if codeCommand.DefaultMemberPermissions != nil {
+		t.Errorf("expected /code access to be controlled by runtime permission checks")
 	}
 	if len(codeCommand.Options) != 2 || codeCommand.Options[0].Name != "redeem" || codeCommand.Options[1].Name != "channel" {
 		t.Errorf("expected /code redeem and /code channel subcommands, got %v", codeCommand.Options)

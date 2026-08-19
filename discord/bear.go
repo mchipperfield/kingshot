@@ -128,23 +128,35 @@ func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {
 	}
 }
 func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	command := i.ApplicationCommandData()
-	if command.Name != "bear" {
+	if i == nil || i.Interaction == nil {
 		return
 	}
-	subcommand := command.Options[0]
-	switch subcommand.Name {
-	case "status":
-		h.bearStatus(s, i)
-	case "set":
-		PermissionMw(h.store)(h.bearSet)(s, i)
-	case "disable":
-		PermissionMw(h.store)(h.bearDisable)(s, i)
-	case "channel":
-		PermissionMw(h.store)(h.bearChannel)(s, i)
-	default:
-		slog.Warn("unrecognised bear subcommand", "subcommand", subcommand.Name)
-		reply(s, i, fmt.Sprintf("Unrecognised bear subcommand %q", subcommand.Name))
+
+	switch i.Interaction.Type {
+	case discordgo.InteractionApplicationCommand:
+		command := i.ApplicationCommandData()
+		if len(command.Options) == 0 {
+			slog.Error("received application command without options", "command", command.Name)
+			return
+		}
+		if command.Name != "bear" {
+			return
+		}
+
+		subcommand := command.Options[0]
+		switch subcommand.Name {
+		case "status":
+			h.bearStatus(s, i)
+		case "set":
+			PermissionMw(h.store)(h.bearSet)(s, i)
+		case "disable":
+			PermissionMw(h.store)(h.bearDisable)(s, i)
+		case "channel":
+			PermissionMw(h.store)(h.bearChannel)(s, i)
+		default:
+			slog.Warn("unrecognised bear subcommand", "subcommand", subcommand.Name)
+			reply(s, i, fmt.Sprintf("Unrecognised bear subcommand %q", subcommand.Name))
+		}
 	}
 
 }
@@ -328,15 +340,6 @@ func (h *BearHandler) bearChannel(s *discordgo.Session, i *discordgo.Interaction
 
 	slog.Info("bear reminder channel set", "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
 	reply(s, i, fmt.Sprintf("Bear reminder channel set to <#%s>.", channel.ID))
-}
-
-func userName(s *discordgo.Session, userID string) string {
-	user, err := s.User(userID)
-	if err != nil {
-		slog.Info("failed to look up Discord user", "error", err, "user_id", userID)
-		return "Unknown user"
-	}
-	return user.Username
 }
 
 func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *discordgo.MessageEmbed {

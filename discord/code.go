@@ -5,7 +5,6 @@ package discord
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -192,14 +191,6 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 	}
 }
 
-func deferInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, responseType discordgo.InteractionResponseType, operation string) bool {
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: responseType}); err != nil {
-		slog.Error("failed to defer interaction response", "operation", operation, "error", err)
-		return false
-	}
-	return true
-}
-
 func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 || len(options[0].Options) < 2 {
@@ -334,12 +325,13 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	reply(s, i, formatTransferResult(result))
 }
 
-// unlinkConfirmCustomID prefixes the confirm button's custom ID; the
-// playerID to unlink is appended after it.
-const unlinkConfirmCustomID = "player-unlink-confirm:"
-
-// unlinkCancelCustomID is the custom ID of the unlink flow's cancel button.
-const unlinkCancelCustomID = "player-unlink-cancel"
+const (
+	// unlinkConfirmCustomID prefixes the confirm button's custom ID; the
+	// playerID to unlink is appended after it.
+	unlinkConfirmCustomID = "player-unlink-confirm:"
+	// unlinkCancelCustomID is the custom ID of the unlink flow's cancel button.
+	unlinkCancelCustomID = "player-unlink-cancel"
+)
 
 func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	options := i.ApplicationCommandData().Options
@@ -457,69 +449,6 @@ func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store
 	return postedGuilds
 }
 
-func guildChannel(ctx context.Context, s *discordgo.Session, store kingshot.AllianceStore, kind kingshot.ChannelKind, guildID string) string {
-	var candidates []string
-	if store != nil {
-		channelID, err := store.GetChannel(ctx, kind, guildID)
-		if err == nil {
-			candidates = appendUnique(candidates, channelID)
-		} else if !errors.Is(err, kingshot.ErrNotFound) {
-			slog.Error("failed to get configured channel, falling back to default channels", "error", err, "guild_id", guildID, "channel_kind", kind)
-		}
-	}
-
-	defaultChannels, err := guildFindDefaultChannels(s, guildID)
-	if err != nil {
-		slog.Error("failed to resolve default guild channels", "error", err, "guild_id", guildID)
-	}
-	for _, channelID := range defaultChannels {
-		candidates = appendUnique(candidates, channelID)
-	}
-
-	for _, channelID := range candidates {
-		if botHasPermission(s, channelID) {
-			return channelID
-		}
-	}
-	return ""
-}
-
-func appendUnique(values []string, value string) []string {
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
-
-func guildFindDefaultChannels(s *discordgo.Session, guildID string) ([]string, error) {
-	guild, err := s.Guild(guildID)
-	if err != nil {
-		return nil, err
-	}
-	channels := make([]string, 0, 2)
-	if guild.SystemChannelID != "" {
-		channels = appendUnique(channels, guild.SystemChannelID)
-	}
-	if guild.PublicUpdatesChannelID != "" {
-		channels = appendUnique(channels, guild.PublicUpdatesChannelID)
-	}
-	guildChannels, err := s.GuildChannels(guildID)
-	if err != nil {
-		return channels, err
-	}
-	for _, channel := range guildChannels {
-		if channel.Type == discordgo.ChannelTypeGuildText || channel.Type == discordgo.ChannelTypeGuildNews {
-			channels = appendUnique(channels, channel.ID)
-		}
-	}
-	return channels, nil
-}
-
 func handleSetRedemptionChannel(store kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		options := i.ApplicationCommandData().Options
@@ -575,16 +504,4 @@ func handleSetRedemptionChannel(store kingshot.AllianceStore) func(s *discordgo.
 		slog.Info("redemption channel set", "user_id", i.Member.User.ID, "channel_id", channel.ID, "guild_id", i.GuildID)
 		reply(s, i, fmt.Sprintf("Redemption channel set to <#%s>.", channel.ID))
 	}
-}
-func botHasPermission(s *discordgo.Session, channelID string) bool {
-	permissions, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
-	if err != nil {
-		slog.Info("failed to get bot permissions for channel", "error", err, "channel_id", channelID, "user_id", s.State.User.ID)
-		return false
-	}
-
-	return permissions&(discordgo.PermissionSendMessages|discordgo.PermissionViewChannel) == (discordgo.PermissionSendMessages | discordgo.PermissionViewChannel)
-}
-func permPointer(p int64) *int64 {
-	return &p
 }

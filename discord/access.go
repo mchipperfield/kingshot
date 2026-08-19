@@ -79,6 +79,7 @@ func (h *AccessHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCre
 		if command.Name != "access" {
 			return
 		}
+
 		subcommand := command.Options[0]
 		switch subcommand.Name {
 		case "view":
@@ -295,26 +296,5 @@ func PermissionMw(store kingshot.AllianceStore) func(func(*discordgo.Session, *d
 			}
 			respond(s, i, "You do not have the required role to execute this command.")
 		}
-	}
-}
-
-func isAdmin(member *discordgo.Member) bool {
-	return member != nil && member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0
-}
-
-func respond(s *discordgo.Session, i *discordgo.InteractionCreate, msg string) {
-	if s == nil || i == nil || i.Interaction == nil {
-		slog.Error("failed to respond: session or interaction is nil")
-		return
-	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: msg,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
-	if err != nil {
-		slog.Error("failed to respond to permission check", "error", err)
 	}
 }

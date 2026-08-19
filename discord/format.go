@@ -1,7 +1,6 @@
 package discord
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -19,7 +18,7 @@ const (
 	maxEmbedFields = 25
 )
 
-func registrationEmbed(result kingshot.RegisterResult) *discordgo.MessageEmbed {
+func registrationEmbed(result *kingshot.RegisterResult) *discordgo.MessageEmbed {
 	embed := &discordgo.MessageEmbed{
 		Title:       "Player Registered",
 		Description: "Your player is ready for gift-code redemptions.",
@@ -139,41 +138,6 @@ func formatRegisterResult(r kingshot.RegisterResult) string {
 		response += "\n\n**Gift Code Redemption Results:**\n" + strings.Join(lines, "\n")
 	}
 	return response
-}
-
-func formatTransferResult(r kingshot.TransferPlayerResult) string {
-	switch {
-	case r.StoreError != nil:
-		return "Error transferring player. Please try again later."
-	case r.NotYourPlayer:
-		return "This player is not registered to your Discord account."
-	case r.AlreadyInKingdom:
-		return "This player is already in that kingdom."
-	case r.MaxPlayersForNewKingdomReached:
-		return "You have already registered the maximum number of players for the new kingdom."
-	case r.PlayerNotFound:
-		if r.RegistrationResult != nil {
-			return "Player not found. We tried to register it for you instead:\n\n" + formatRegisterResult(*r.RegistrationResult)
-		}
-		return "Player not found." // Should not happen if registration was attempted
-	case r.Success:
-		return fmt.Sprintf("Player `%s` has been successfully transferred to kingdom `%s`.", r.PlayerID, r.NewKingdomID)
-	}
-	return "An unknown error occurred during transfer."
-}
-
-func formatUnlinkResult(err error) string {
-	switch {
-	case errors.Is(err, kingshot.ErrNotFound):
-		return "Player not found."
-	case errors.Is(err, kingshot.NotYourPlayer):
-		return "This player is not registered to your Discord account."
-	case err == nil:
-		return "Player has been unlinked from your Discord account."
-	default:
-		slog.Info("Failed to unlink player", "error", err)
-		return "Error unlinking player. Please try again later."
-	}
 }
 
 // chunkMessage splits s into slices of at most maxLen characters, breaking on

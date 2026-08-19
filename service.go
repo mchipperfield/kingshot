@@ -114,28 +114,33 @@ type NewPlayerRequest struct {
 	PlayerID, UserID, KingdomID, GuildID string
 }
 
+var (
+	ErrAlreadySelf  = errors.New("player already registered to this user")
+	ErrAlreadyOther = errors.New("player already registered to a different user")
+)
+
 // RegisterPlayer validates playerID via the KingShot API, registers it with
 // UserID in the store, and redeems any currently active codes for the
 // new player. It is safe to call concurrently. ctx bounds all store and HTTP
 // calls made while registering req.
-func (s *GiftCodeService) RegisterPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
+func (s *GiftCodeService) RegisterPlayer(ctx context.Context, req NewPlayerRequest) (*RegisterResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.registerPlayer(ctx, req)
 }
 
-func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
-	existing, err := s.store.FindByPlayerID(ctx, req.PlayerID)
-	if err != nil {
-		return RegisterResult{StoreError: err}
+func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerRequest) (*RegisterResult, error) {
+	player, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	// Treat a blank owner as unowned so a previously unlinked player can be
 	// reclaimed even if the lookup surfaces the document.
-	if existing.UserID != "" {
-		if existing.UserID == req.UserID {
-			return RegisterResult{AlreadySelf: true}
+	if player != nil && player.UserID != "" {
+		if player.UserID == req.UserID {
+			return nil, ErrAlreadySelf
 		}
-		return RegisterResult{AlreadyOther: true}
+		return nil, ErrAlreadyOther
 	}
 
 	return s.addNewPlayer(ctx, req)
@@ -144,11 +149,10 @@ func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerReque
 // addNewPlayer stores req in the store and redeems active codes for the new player.
 // Callers must have already verified that the player does not exist.
 // Caller must hold s.mu.
-func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
+func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest) (*RegisterResult, error) {
 	userPlayers, err := s.store.FindByUser(ctx, req.UserID)
 	if err != nil {
-		slog.Error("failed to look up players by user for registration", "error", err)
-		return RegisterResult{StoreError: err}
+		return nil, err
 	}
 
 	kingdomPlayerCount := 0
@@ -159,12 +163,12 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 	}
 
 	if kingdomPlayerCount >= 2 {
-		return RegisterResult{MaxPlayersForKingdomReached: true}
+		return nil, ErrMaxPlayersForKingdom
 	}
 
 	if err := s.store.AddPlayer(ctx, req); err != nil {
 		slog.Error("failed to add player", "error", err)
-		return RegisterResult{StoreError: err}
+		return nil, err
 	}
 
 	player := &Player{
@@ -176,33 +180,38 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 
 	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
 
-	codeResults, err := s.redeemActiveCodes(ctx, player)
+	redeemResults, err := s.redeemActiveCodes(ctx, player)
 	if err != nil {
-		return RegisterResult{
-			PlayerID:    req.PlayerID,
-			UserID:      req.UserID,
-			StoreError:  err,
-			CodeResults: codeResults,
-		}
+		return &RegisterResult{StoreError: err}, err
 	}
-	return RegisterResult{
-		PlayerID:    req.PlayerID,
-		UserID:      req.UserID,
+	return &RegisterResult{
 		Success:     true,
-		CodeResults: codeResults,
-	}
+		PlayerID:    player.PlayerID,
+		KingdomID:   player.KingdomID,
+		UserID:      player.UserID,
+		GuildID:     player.GuildID,
+		StoreError:  err,
+		APIError:    err,
+		CodeResults: redeemResults,
+	}, nil
 }
+
+var (
+	ErrAlreadyInKingdom     = errors.New("player already in kingdom")
+	ErrMaxPlayersForKingdom = errors.New("max players for kingdom reached")
+	NotYourPlayer           = errors.New("not your player")
+)
 
 // TransferPlayer transfers req.PlayerID to req.NewKingdomID, or registers the
 // player if not already known. ctx bounds all store and HTTP calls made while
 // processing req.
-func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayerRequest) TransferPlayerResult {
+func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayerRequest) (*TransferPlayerResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	player, err := s.store.FindByPlayerID(ctx, req.PlayerID)
-	if err != nil {
-		return TransferPlayerResult{StoreError: err}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 
 	// Treat a blank owner as unowned so a previously unlinked player can be
@@ -215,26 +224,30 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 			UserID:    req.UserID,
 			GuildID:   req.GuildID,
 		}
-		regResult := s.addNewPlayer(ctx, registerReq)
-		return TransferPlayerResult{
-			PlayerNotFound:     true,
-			RegistrationResult: &regResult,
-		}
+		regResult, err := s.addNewPlayer(ctx, registerReq)
+		return &TransferPlayerResult{
+			Player: Player{
+				PlayerID:  regResult.PlayerID,
+				KingdomID: regResult.KingdomID,
+				UserID:    regResult.UserID,
+				GuildID:   regResult.GuildID,
+			},
+			RegistrationResult: nil,
+		}, err
 	}
 
 	if player.UserID != req.UserID {
-		return TransferPlayerResult{NotYourPlayer: true}
+		return nil, NotYourPlayer
 	}
 
 	if player.KingdomID == req.NewKingdomID {
-		return TransferPlayerResult{AlreadyInKingdom: true}
+		return nil, ErrAlreadyInKingdom
 	}
 
 	// Check if the new kingdom has space
 	userPlayers, err := s.store.FindByUser(ctx, req.UserID)
 	if err != nil {
-		slog.Error("failed to look up players by user for transfer", "error", err)
-		return TransferPlayerResult{StoreError: err}
+		return nil, fmt.Errorf("find players by user %s: %w", req.UserID, err)
 	}
 
 	kingdomPlayerCount := 0
@@ -246,20 +259,20 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 	}
 
 	if kingdomPlayerCount >= 2 {
-		return TransferPlayerResult{MaxPlayersForNewKingdomReached: true}
+		return nil, ErrMaxPlayersForKingdom
 	}
 
 	if err := s.store.UpdatePlayerKingdom(ctx, req); err != nil {
-		slog.Error("failed to update player kingdom", "error", err)
-		return TransferPlayerResult{StoreError: err}
+		return nil, fmt.Errorf("update player kingdom: %w", err)
 	}
 
-	return TransferPlayerResult{
-		PlayerID:     req.PlayerID,
-		NewKingdomID: req.NewKingdomID,
-		UserID:       req.UserID,
-		Success:      true,
-	}
+	return &TransferPlayerResult{
+		Player: Player{
+			PlayerID:  req.PlayerID,
+			KingdomID: req.NewKingdomID,
+			UserID:    req.UserID,
+		},
+	}, nil
 }
 
 // UnlinkPlayer removes req.UserID's ownership of req.PlayerID and marks it
@@ -285,8 +298,6 @@ func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequ
 	return nil
 }
 
-var NotYourPlayer = errors.New("not your player")
-
 func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) ([]*Player, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -309,7 +320,7 @@ func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, c
 func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) ([]ActiveCodeResult, error) {
 	active, err := s.codeStore.ActiveCodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch active codes: %w", err)
 	}
 	if len(active) == 0 {
 		return nil, nil

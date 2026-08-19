@@ -223,12 +223,16 @@ func (h *GiftCodeHandler) handleRegisterPlayer(s *discordgo.Session, i *discordg
 		GuildID:   i.Interaction.GuildID,
 	}
 
-	result := h.service.RegisterPlayer(ctx, req)
-	if result.Success {
+	result, err := h.service.RegisterPlayer(ctx, req)
+	if err != nil {
+		reply(s, i, "Error registering player.")
+		return
+	}
+	if err != nil {
 		replyWithEmbed(s, i, registrationEmbed(result))
 		return
 	}
-	reply(s, i, formatRegisterResult(result))
+	reply(s, i, formatRegisterResult(*result))
 }
 
 func (h *GiftCodeHandler) handleAddCode() func(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -322,8 +326,25 @@ func (h *GiftCodeHandler) handleTransferPlayer(s *discordgo.Session, i *discordg
 		GuildID:      i.GuildID,
 	}
 
-	result := h.service.TransferPlayer(ctx, req)
-	reply(s, i, formatTransferResult(result))
+	player, err := h.service.TransferPlayer(ctx, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, kingshot.NotYourPlayer):
+			reply(s, i, "This player is not registered to your Discord account.")
+		case errors.Is(err, kingshot.ErrAlreadyInKingdom):
+			reply(s, i, "This player is already in that kingdom.")
+		case errors.Is(err, kingshot.ErrMaxPlayersForKingdom):
+			reply(s, i, "You have already registered the maximum number of players for the new kingdom.")
+		case errors.Is(err, kingshot.ErrNotFound):
+			reply(s, i, "Player not found. We tried to register it for you instead:\n\n"+formatRegisterResult(*player.RegistrationResult))
+		default:
+			slog.Info("Failed to transfer player", "player_id", playerID, "error", err)
+			reply(s, i, "Error transferring player. Please try again later.")
+		}
+		return
+	}
+
+	reply(s, i, fmt.Sprintf("Player `%s` has been successfully transferred to kingdom `%s`.", player.PlayerID, player.KingdomID))
 }
 
 const (

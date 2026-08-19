@@ -280,7 +280,7 @@ func TestFormatRegisterResult_WithCodeResults(t *testing.T) {
 }
 
 func TestRegistrationEmbed(t *testing.T) {
-	embed := registrationEmbed(kingshot.RegisterResult{
+	embed := registrationEmbed(&kingshot.RegisterResult{
 		Success:  true,
 		PlayerID: "player-1",
 		CodeResults: []kingshot.ActiveCodeResult{

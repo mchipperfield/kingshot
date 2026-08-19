@@ -125,14 +125,13 @@ func (s *GiftCodeService) RegisterPlayer(ctx context.Context, req NewPlayerReque
 }
 
 func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
-	existing, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	existing, err := s.store.FindByPlayerID(ctx, req.PlayerID)
 	if err != nil {
-		slog.Error("failed to look up player for registration", "error", err)
 		return RegisterResult{StoreError: err}
 	}
 	// Treat a blank owner as unowned so a previously unlinked player can be
 	// reclaimed even if the lookup surfaces the document.
-	if found && existing.UserID != "" {
+	if existing.UserID != "" {
 		if existing.UserID == req.UserID {
 			return RegisterResult{AlreadySelf: true}
 		}
@@ -201,15 +200,14 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	player, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	player, err := s.store.FindByPlayerID(ctx, req.PlayerID)
 	if err != nil {
-		slog.Error("failed to look up player for transfer", "error", err)
 		return TransferPlayerResult{StoreError: err}
 	}
 
 	// Treat a blank owner as unowned so a previously unlinked player can be
 	// reclaimed even if the lookup surfaces the document.
-	if !found || player.UserID == "" {
+	if err == ErrNotFound || player.UserID == "" {
 		// Player doesn't exist, so let's register them instead.
 		registerReq := NewPlayerRequest{
 			PlayerID:  req.PlayerID,
@@ -271,26 +269,18 @@ func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequ
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	existing, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	existing, err := s.store.FindByPlayerID(ctx, req.PlayerID)
 	if err != nil {
-		slog.Error("failed to look up player for unlink", "error", err)
 		return fmt.Errorf("find player by id %s: %w", req.PlayerID, err)
 	}
-	// found is false both when the player was never registered and when it
-	// has already been unlinked, so both cases report the same result.
-	if !found {
-		return fmt.Errorf("find player by id %s: %w", req.PlayerID, ErrNotFound)
-	}
+
 	if existing.UserID != req.UserID {
 		return NotYourPlayer
 	}
 
 	if err := s.store.UnlinkPlayer(ctx, req); err != nil {
-		slog.Error("failed to unlink player", "error", err)
 		return fmt.Errorf("unlink player %s: %w", req.PlayerID, err)
 	}
-
-	slog.Info("player unlinked", "player_id", req.PlayerID, "user_id", req.UserID)
 
 	return nil
 }

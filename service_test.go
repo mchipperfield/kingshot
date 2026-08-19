@@ -44,14 +44,17 @@ func (m *mapStore) Players(ctx context.Context) ([]*Player, error) {
 	return players, nil
 }
 
-func (m *mapStore) FindByPlayerID(ctx context.Context, playerID string) (*Player, bool, error) {
+func (m *mapStore) FindByPlayerID(ctx context.Context, playerID string) (*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.unlinked[playerID] {
-		return nil, false, nil
+		return nil, ErrNotFound
 	}
-	p, found := m.players[playerID]
-	return p, found, nil
+	p, ok := m.players[playerID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return p, nil
 }
 
 func (m *mapStore) FindByUser(ctx context.Context, userID string) ([]*Player, error) {
@@ -109,8 +112,8 @@ func (m *mapStore) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) er
 type errStore struct{ err error }
 
 func (e *errStore) Players(context.Context) ([]*Player, error) { return nil, e.err }
-func (e *errStore) FindByPlayerID(context.Context, string) (*Player, bool, error) {
-	return nil, false, e.err
+func (e *errStore) FindByPlayerID(context.Context, string) (*Player, error) {
+	return nil, e.err
 }
 func (e *errStore) FindByUser(context.Context, string) ([]*Player, error) { return nil, e.err }
 func (e *errStore) AddPlayer(context.Context, NewPlayerRequest) error     { return e.err }
@@ -479,7 +482,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		if !result.Success {
 			t.Fatalf("expected success, got %+v", result)
 		}
-		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" {
+		if p, err := store.FindByPlayerID(t.Context(), "p1"); err != nil || p.UserID != "u1" {
 			t.Errorf("player not added to store correctly")
 		}
 	})
@@ -529,7 +532,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if !result.Success {
 			t.Fatalf("expected success, got %+v", result)
 		}
-		if p, _, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" || p.GuildID != "g2" {
+		if p, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" || p.GuildID != "g2" {
 			t.Errorf("player transfer not fully updated, got kingdom=%s guild=%s", p.KingdomID, p.GuildID)
 		}
 	})
@@ -548,7 +551,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if !result.RegistrationResult.Success {
 			t.Errorf("expected registration to be successful, got %+v", result.RegistrationResult)
 		}
-		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" || p.GuildID != "g1" {
+		if p, err := store.FindByPlayerID(t.Context(), "p1"); err != nil || p.UserID != "u1" || p.GuildID != "g1" {
 			t.Errorf("player not added to store correctly")
 		}
 	})
@@ -566,9 +569,9 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if result.RegistrationResult == nil || !result.RegistrationResult.Success {
 			t.Fatalf("expected successful registration, got %+v", result.RegistrationResult)
 		}
-		p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-		if !found || p.UserID != "u1" || p.KingdomID != "k1" || p.GuildID != "g1" {
-			t.Errorf("player not re-registered correctly: found=%v player=%+v", found, p)
+		p, err := store.FindByPlayerID(t.Context(), "p1")
+		if err != nil || p.UserID != "u1" || p.KingdomID != "k1" || p.GuildID != "g1" {
+			t.Errorf("player not re-registered correctly: err=%v player=%+v", err, p)
 		}
 	})
 
@@ -623,8 +626,8 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected nil error, got %+v", err)
 		}
-		_, found, _ := store.FindByPlayerID(t.Context(), "p1")
-		if found {
+		_, err = store.FindByPlayerID(t.Context(), "p1")
+		if !errors.Is(err, ErrNotFound) {
 			t.Fatal("expected unlinked player to no longer be found")
 		}
 	})
@@ -634,32 +637,32 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		err := svc.UnlinkPlayer(t.Context(), req)
-		if errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %+v", err)
 		}
 	})
 
 	t.Run("not your player", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
+			"p1": {PlayerID: "p1", UserID: "u2"},
 		})
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		err := svc.UnlinkPlayer(t.Context(), req)
-		if errors.Is(err, NotYourPlayer) {
+		if !errors.Is(err, NotYourPlayer) {
 			t.Errorf("expected NotYourPlayer, got %+v", err)
 		}
 	})
 
 	t.Run("already unlinked reports player not found", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p1": {PlayerID: "p1", UserID: "u1"},
 		})
 		store.unlinked["p1"] = true
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
 		err := svc.UnlinkPlayer(t.Context(), req)
-		if errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %+v", err)
 		}
 	})
@@ -678,7 +681,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 // returning AlreadyOther/AlreadySelf, allowing accounts to change hands.
 func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 	store := newMapStore(map[string]*Player{
-		"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "old-guild"},
+		"p1": {PlayerID: "p1", UserID: ""},
 	})
 	store.unlinked["p1"] = true
 	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
@@ -687,8 +690,8 @@ func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 	if !result.Success {
 		t.Fatalf("expected success, got %+v", result)
 	}
-	p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-	if !found {
+	p, err := store.FindByPlayerID(t.Context(), "p1")
+	if err != nil {
 		t.Fatal("expected player to exist in store")
 	}
 	if p.UserID != "u2" {
@@ -709,8 +712,8 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 	if !result.Success {
 		t.Fatalf("expected success, got %+v", result)
 	}
-	p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-	if !found {
+	p, err := store.FindByPlayerID(t.Context(), "p1")
+	if err != nil {
 		t.Fatal("expected player to exist in store")
 	}
 	if p.UserID != "u2" || p.KingdomID != "k2" || p.GuildID != "new-guild" {

@@ -21,7 +21,7 @@ type PlayerStore interface {
 	Players(ctx context.Context) ([]*Player, error)
 	// FindByPlayerID looks up the player by their playerID. found is false when
 	// the player is not registered, including if it has been unlinked.
-	FindByPlayerID(ctx context.Context, playerID string) (player *Player, found bool, err error)
+	FindByPlayerID(ctx context.Context, playerID string) (player *Player, err error)
 	// FindByUser returns all players registered to a given user.
 	FindByUser(ctx context.Context, userID string) ([]*Player, error)
 	// AddPlayer stores a new player, or reactivates and re-links a previously

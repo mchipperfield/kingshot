@@ -55,12 +55,3 @@ type TransferPlayerResult struct {
 	// registered instead.
 	RegistrationResult *RegisterResult
 }
-
-// UnlinkPlayerResult is the structured outcome of an UnlinkPlayer call.
-type UnlinkPlayerResult struct {
-	PlayerID       string
-	PlayerNotFound bool
-	NotYourPlayer  bool
-	StoreError     error
-	Success        bool
-}

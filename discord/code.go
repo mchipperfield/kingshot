@@ -5,6 +5,7 @@ package discord
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -166,32 +167,32 @@ func (h *GiftCodeHandler) Handle(s *discordgo.Session, i *discordgo.InteractionC
 			subcommand := command.Options[0]
 			switch subcommand.Name {
 			case "register":
-				handleRegisterPlayer(s, i, h.service)
+				h.handleRegisterPlayer(s, i)
 			case "status":
-				handlePlayerStatus(s, i, h.service)
+				h.handlePlayerStatus(s, i)
 			case "transfer":
-				handleTransferPlayer(s, i, h.service)
+				h.handleTransferPlayer(s, i)
 			case "unlink":
-				handleUnlinkPlayer(s, i)
+				h.handleUnlinkPlayer(s, i)
 			}
 		case "code":
 			subcommand := command.Options[0]
 			switch subcommand.Name {
 			case "redeem":
-				PermissionMw(h.store)(handleAddCode(h.service, h.store))(s, i)
+				PermissionMw(h.store)(h.handleAddCode())(s, i)
 			case "channel":
-				PermissionMw(h.store)(handleSetRedemptionChannel(h.store))(s, i)
+				PermissionMw(h.store)(h.handleSetRedemptionChannel())(s, i)
 			}
 		default:
 			return
 		}
 	case discordgo.InteractionMessageComponent:
-		handleUnlinkConfirmation(s, i, h.service)
+		h.handleUnlinkConfirmation(s, i)
 
 	}
 }
 
-func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+func (h *GiftCodeHandler) handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 || len(options[0].Options) < 2 {
 		slog.Error("received malformed player register interaction")
@@ -222,7 +223,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		GuildID:   i.Interaction.GuildID,
 	}
 
-	result := svc.RegisterPlayer(ctx, req)
+	result := h.service.RegisterPlayer(ctx, req)
 	if result.Success {
 		replyWithEmbed(s, i, registrationEmbed(result))
 		return
@@ -230,7 +231,7 @@ func handleRegisterPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	reply(s, i, formatRegisterResult(result))
 }
 
-func handleAddCode(svc *kingshot.GiftCodeService, allianceStore kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (h *GiftCodeHandler) handleAddCode() func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		options := i.ApplicationCommandData().Options
 		if len(options) == 0 || len(options[0].Options) < 1 {
@@ -247,9 +248,9 @@ func handleAddCode(svc *kingshot.GiftCodeService, allianceStore kingshot.Allianc
 		ctx, cancel := context.WithTimeout(context.Background(), codeProcessingTimeout)
 		defer cancel()
 
-		result := svc.ProcessNewCode(ctx, newCode)
+		result := h.service.ProcessNewCode(ctx, newCode)
 		if result.Added && len(result.PlayerResults) > 0 {
-			posted := postGuildRedemptionResults(ctx, s, allianceStore, result.Code, result.PlayerResults)
+			posted := postGuildRedemptionResults(ctx, s, h.store, result.Code, result.PlayerResults)
 			reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))
 			return
 		}
@@ -261,7 +262,7 @@ func handleAddCode(svc *kingshot.GiftCodeService, allianceStore kingshot.Allianc
 	}
 }
 
-func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+func (h *GiftCodeHandler) handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if !deferInteraction(s, i, discordgo.InteractionResponseDeferredChannelMessageWithSource, "player status") {
 		return
 	}
@@ -269,7 +270,7 @@ func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, sv
 	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
 
-	players, err := svc.GetPlayersByUser(ctx, i.Member.User.ID)
+	players, err := h.service.GetPlayersByUser(ctx, i.Member.User.ID)
 	if err != nil {
 		slog.Error("failed to get players for user", "error", err, "user_id", i.Member.User.ID)
 		reply(s, i, "Error fetching your players.")
@@ -290,7 +291,7 @@ func handlePlayerStatus(s *discordgo.Session, i *discordgo.InteractionCreate, sv
 	reply(s, i, builder.String())
 }
 
-func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+func (h *GiftCodeHandler) handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 || len(options[0].Options) < 2 {
 		slog.Error("received malformed player transfer interaction")
@@ -321,7 +322,7 @@ func handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		GuildID:      i.GuildID,
 	}
 
-	result := svc.TransferPlayer(ctx, req)
+	result := h.service.TransferPlayer(ctx, req)
 	reply(s, i, formatTransferResult(result))
 }
 
@@ -333,7 +334,7 @@ const (
 	unlinkCancelCustomID = "player-unlink-cancel"
 )
 
-func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (h *GiftCodeHandler) handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	options := i.ApplicationCommandData().Options
 	if len(options) == 0 || len(options[0].Options) < 1 {
 		slog.Error("received malformed player unlink interaction")
@@ -372,7 +373,11 @@ func handleUnlinkPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {
 
 // handleUnlinkConfirmation handles clicks on the confirm/cancel buttons
 // produced by handleUnlinkPlayer.
-func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate, svc *kingshot.GiftCodeService) {
+func (h *GiftCodeHandler) handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i == nil || i.Interaction == nil || i.Type != discordgo.InteractionMessageComponent {
+		slog.Error("received nil Discord interaction or message component data")
+		return
+	}
 	customID := i.MessageComponentData().CustomID
 
 	if customID == unlinkCancelCustomID {
@@ -407,8 +412,19 @@ func handleUnlinkConfirmation(s *discordgo.Session, i *discordgo.InteractionCrea
 		GuildID:  i.GuildID,
 	}
 
-	result := svc.UnlinkPlayer(ctx, req)
-	respondFinal(s, i, formatUnlinkResult(result))
+	err := h.service.UnlinkPlayer(ctx, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, kingshot.ErrNotFound):
+			respondFinal(s, i, "Player not found.")
+		case errors.Is(err, kingshot.NotYourPlayer):
+			respondFinal(s, i, "This player is not registered to your Discord account.")
+		default:
+			slog.Info("Failed to unlink player", "player_id", playerID, "error", err)
+			respondFinal(s, i, "Error unlinking player. Please try again later.")
+		}
+	}
+	respondFinal(s, i, "Player has been unlinked from your Discord account.")
 }
 
 func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store kingshot.AllianceStore, code string, results []kingshot.PlayerRedeemResult) []string {
@@ -449,7 +465,7 @@ func postGuildRedemptionResults(ctx context.Context, s *discordgo.Session, store
 	return postedGuilds
 }
 
-func handleSetRedemptionChannel(store kingshot.AllianceStore) func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (h *GiftCodeHandler) handleSetRedemptionChannel() func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	return func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		options := i.ApplicationCommandData().Options
 		if len(options) == 0 || len(options[0].Options) < 1 {
@@ -463,7 +479,7 @@ func handleSetRedemptionChannel(store kingshot.AllianceStore) func(s *discordgo.
 		ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 		defer cancel()
 
-		if store == nil {
+		if h.store == nil {
 			reply(s, i, "Unable to set redemption channel due to a database error.")
 			return
 		}
@@ -495,7 +511,7 @@ func handleSetRedemptionChannel(store kingshot.AllianceStore) func(s *discordgo.
 			ChannelId: channel.ID,
 		}
 
-		if err := store.SetChannel(ctx, kingshot.RedemptionChannel, &req); err != nil {
+		if err := h.store.SetChannel(ctx, kingshot.RedemptionChannel, &req); err != nil {
 			slog.Error("failed to set redemption channel", "error", err, "guild_id", i.GuildID, "channel_id", channel.ID, "user_id", i.Member.User.ID)
 			reply(s, i, "Failed to set redemption channel.")
 			return

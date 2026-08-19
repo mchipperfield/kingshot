@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -161,18 +162,18 @@ func formatTransferResult(r kingshot.TransferPlayerResult) string {
 	return "An unknown error occurred during transfer."
 }
 
-func formatUnlinkResult(r kingshot.UnlinkPlayerResult) string {
+func formatUnlinkResult(err error) string {
 	switch {
-	case r.StoreError != nil:
-		return "Error unlinking player. Please try again later."
-	case r.PlayerNotFound:
+	case errors.Is(err, kingshot.ErrNotFound):
 		return "Player not found."
-	case r.NotYourPlayer:
+	case errors.Is(err, kingshot.NotYourPlayer):
 		return "This player is not registered to your Discord account."
-	case r.Success:
-		return fmt.Sprintf("Player `%s` has been unlinked from your Discord account.", r.PlayerID)
+	case err == nil:
+		return "Player has been unlinked from your Discord account."
+	default:
+		slog.Info("Failed to unlink player", "error", err)
+		return "Error unlinking player. Please try again later."
 	}
-	return "An unknown error occurred while unlinking."
 }
 
 // chunkMessage splits s into slices of at most maxLen characters, breaking on

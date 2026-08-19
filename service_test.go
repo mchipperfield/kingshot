@@ -619,9 +619,9 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.Success {
-			t.Fatalf("expected success, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if err != nil {
+			t.Fatalf("expected nil error, got %+v", err)
 		}
 		_, found, _ := store.FindByPlayerID(t.Context(), "p1")
 		if found {
@@ -633,9 +633,9 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		store := newMapStore(nil)
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.PlayerNotFound {
-			t.Errorf("expected PlayerNotFound=true, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %+v", err)
 		}
 	})
 
@@ -645,9 +645,9 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		})
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.NotYourPlayer {
-			t.Errorf("expected NotYourPlayer=true, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if errors.Is(err, NotYourPlayer) {
+			t.Errorf("expected NotYourPlayer, got %+v", err)
 		}
 	})
 
@@ -658,17 +658,17 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		store.unlinked["p1"] = true
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.PlayerNotFound {
-			t.Errorf("expected PlayerNotFound=true, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %+v", err)
 		}
 	})
 
 	t.Run("store error on lookup", func(t *testing.T) {
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("boom")}}
-		result := svc.UnlinkPlayer(t.Context(), UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"})
-		if result.StoreError == nil {
-			t.Errorf("expected StoreError, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"})
+		if err == nil {
+			t.Errorf("expected error, got %+v", err)
 		}
 	})
 }

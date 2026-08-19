@@ -2,6 +2,8 @@ package kingshot
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -265,33 +267,35 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 // UnlinkPlayer removes req.UserID's ownership of req.PlayerID and marks it
 // inactive so it is no longer redeemed for new codes. ctx bounds all store
 // calls made while processing req.
-func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) UnlinkPlayerResult {
+func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	existing, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
 	if err != nil {
 		slog.Error("failed to look up player for unlink", "error", err)
-		return UnlinkPlayerResult{StoreError: err}
+		return fmt.Errorf("find player by id %s: %w", req.PlayerID, err)
 	}
 	// found is false both when the player was never registered and when it
 	// has already been unlinked, so both cases report the same result.
 	if !found {
-		return UnlinkPlayerResult{PlayerNotFound: true}
+		return fmt.Errorf("find player by id %s: %w", req.PlayerID, ErrNotFound)
 	}
 	if existing.UserID != req.UserID {
-		return UnlinkPlayerResult{NotYourPlayer: true}
+		return NotYourPlayer
 	}
 
 	if err := s.store.UnlinkPlayer(ctx, req); err != nil {
 		slog.Error("failed to unlink player", "error", err)
-		return UnlinkPlayerResult{StoreError: err}
+		return fmt.Errorf("unlink player %s: %w", req.PlayerID, err)
 	}
 
 	slog.Info("player unlinked", "player_id", req.PlayerID, "user_id", req.UserID)
 
-	return UnlinkPlayerResult{PlayerID: req.PlayerID, Success: true}
+	return nil
 }
+
+var NotYourPlayer = errors.New("not your player")
 
 func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) ([]*Player, error) {
 	s.mu.Lock()

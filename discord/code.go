@@ -225,14 +225,23 @@ func (h *GiftCodeHandler) handleRegisterPlayer(s *discordgo.Session, i *discordg
 
 	result, err := h.service.RegisterPlayer(ctx, req)
 	if err != nil {
+		switch {
+		case errors.Is(err, kingshot.ErrMaxPlayersForKingdom):
+			reply(s, i, "You have already registered the maximum number of players for this kingdom.")
+			return
+		case errors.Is(err, kingshot.ErrAlreadySelf):
+			reply(s, i, "This player ID is already registered to your Discord account.")
+			return
+		case errors.Is(err, kingshot.ErrAlreadyOther):
+			reply(s, i, "This player ID is already registered to another Discord account.")
+			return
+		}
 		reply(s, i, "Error registering player.")
 		return
 	}
-	if err != nil {
-		replyWithEmbed(s, i, registrationEmbed(result))
-		return
-	}
-	reply(s, i, formatRegisterResult(*result))
+
+	replyWithEmbed(s, i, registrationEmbed(result))
+
 }
 
 func (h *GiftCodeHandler) handleAddCode() func(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -276,7 +285,7 @@ func (h *GiftCodeHandler) handlePlayerStatus(s *discordgo.Session, i *discordgo.
 
 	players, err := h.service.GetPlayersByUser(ctx, i.Member.User.ID)
 	if err != nil {
-		slog.Error("failed to get players for user", "error", err, "user_id", i.Member.User.ID)
+		slog.Info("failed to get players by user", "error", err, "user_id", i.Member.User.ID)
 		reply(s, i, "Error fetching your players.")
 		return
 	}
@@ -286,13 +295,25 @@ func (h *GiftCodeHandler) handlePlayerStatus(s *discordgo.Session, i *discordgo.
 		return
 	}
 
-	var builder strings.Builder
-	builder.WriteString("Your registered players:\n")
-	for _, p := range players {
-		builder.WriteString(fmt.Sprintf("- Player ID: `%s`, Kingdom ID: `%s`\n", p.PlayerID, p.KingdomID))
+	embed := &discordgo.MessageEmbed{
+		Title:       "Player Status",
+		Description: fmt.Sprintf("You have %d registered player(s).", len(players)),
+		Color:       embedColor,
+		Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
+		Author: &discordgo.MessageEmbedAuthor{
+			Name:    "Goaf's Herald",
+			IconURL: thumbnailURL,
+		},
+	}
+	for _, player := range players {
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:   fmt.Sprintf("Player %s", player.PlayerID),
+			Value:  fmt.Sprintf("Kingdom ID: %s", player.KingdomID),
+			Inline: true,
+		})
 	}
 
-	reply(s, i, builder.String())
+	replyWithEmbed(s, i, embed)
 }
 
 func (h *GiftCodeHandler) handleTransferPlayer(s *discordgo.Session, i *discordgo.InteractionCreate) {

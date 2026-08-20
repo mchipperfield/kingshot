@@ -186,3 +186,38 @@ func respondFinal(s *discordgo.Session, i *discordgo.InteractionCreate, msg stri
 		slog.Error("failed to edit interaction response", "error", err)
 	}
 }
+
+func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *discordgo.MessageEmbed {
+	next := fmt.Sprintf("<t:%d:F>", status.Next.UTC().Unix())
+
+	return &discordgo.MessageEmbed{
+		Title:       fmt.Sprintf("Bear Trap %s", status.Bear),
+		Description: description,
+		//Timestamp:   time.Now().Format(time.RFC3339),
+		Color: 11261619,
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Set by %s on %s", setBy, status.SetAt.UTC().Format("02 Jan 2006 at 15:04 UTC")),
+		},
+		Thumbnail: &discordgo.MessageEmbedThumbnail{
+			URL: thumbnailURL,
+		},
+		Author: &discordgo.MessageEmbedAuthor{
+			Name:    "Goaf's Herald",
+			IconURL: thumbnailURL,
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:  "Reminders",
+				Value: status.Reminders(),
+			},
+			{
+				Name:  "Next Bear At:",
+				Value: next,
+			},
+			{
+				Name:  "That's:",
+				Value: fmt.Sprintf("<t:%d:R>", status.Next.Unix()),
+			},
+		},
+	}
+}

@@ -515,6 +515,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		if !errors.Is(err, ErrAlreadySelf) {
 			t.Errorf("expected AlreadySelf error, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player ID is already registered to your Discord account.")
 	})
 
 	t.Run("player already registered to other", func(t *testing.T) {
@@ -525,6 +526,7 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		if !errors.Is(err, ErrAlreadyOther) {
 			t.Errorf("expected AlreadyOther error, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player ID is already registered to another Discord account.")
 	})
 
 	t.Run("max players for kingdom reached", func(t *testing.T) {
@@ -538,7 +540,19 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 		if !errors.Is(err, ErrMaxPlayersForKingdom) {
 			t.Errorf("expected MaxPlayersForKingdom error, got %+v", err)
 		}
+		assertPlayerError(t, err, "You have already registered the maximum number of players for this kingdom.")
 	})
+}
+
+func assertPlayerError(t *testing.T, err error, wantMessage string) {
+	t.Helper()
+	var playerErr *PlayerError
+	if !errors.As(err, &playerErr) {
+		t.Fatalf("expected PlayerError, got %T: %v", err, err)
+	}
+	if playerErr.Error() != wantMessage {
+		t.Fatalf("PlayerError.Error() = %q, want %q", playerErr.Error(), wantMessage)
+	}
 }
 
 func TestGiftCodeService_TransferPlayer(t *testing.T) {
@@ -600,6 +614,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if err != nil && !errors.Is(err, NotYourPlayer) {
 			t.Fatalf("expected NotYourPlayer error, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player is not registered to your Discord account.")
 	})
 
 	t.Run("max players for new kingdom reached", func(t *testing.T) {
@@ -614,6 +629,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if !errors.Is(err_, ErrMaxPlayersForKingdom) {
 			t.Errorf("expected MaxPlayersForNewKingdomReached error, got %+v", err_)
 		}
+		assertPlayerError(t, err_, "You have already registered the maximum number of players for the new kingdom.")
 	})
 
 	t.Run("transfer to current kingdom is rejected", func(t *testing.T) {
@@ -627,6 +643,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		if !errors.Is(err, ErrAlreadyInKingdom) {
 			t.Fatalf("expected ErrAlreadyInKingdom, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player is already in that kingdom.")
 	})
 }
 
@@ -667,6 +684,7 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		if !errors.Is(err, NotYourPlayer) {
 			t.Errorf("expected NotYourPlayer, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player is not registered to your Discord account.")
 	})
 
 	t.Run("already unlinked reports player not found", func(t *testing.T) {

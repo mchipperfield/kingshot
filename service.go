@@ -113,6 +113,25 @@ var (
 	ErrAlreadyOther = errors.New("player already registered to a different user")
 )
 
+// PlayerError is a caller-safe player registration or transfer failure.
+// Error may be shown directly to a user.
+type PlayerError struct {
+	message string
+	cause   error
+}
+
+func newPlayerError(message string, cause error) *PlayerError {
+	return &PlayerError{message: message, cause: cause}
+}
+
+func (e *PlayerError) Error() string {
+	return e.message
+}
+
+func (e *PlayerError) Unwrap() error {
+	return e.cause
+}
+
 // RegisterPlayer validates playerID via the KingShot API, registers it with
 // UserID in the store, and redeems any currently active codes for the
 // new player. It is safe to call concurrently. ctx bounds all store and HTTP
@@ -132,9 +151,9 @@ func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerReque
 	// reclaimed even if the lookup surfaces the document.
 	if player != nil && player.UserID != "" {
 		if player.UserID == req.UserID {
-			return nil, ErrAlreadySelf
+			return nil, newPlayerError("This player ID is already registered to your Discord account.", ErrAlreadySelf)
 		}
-		return nil, ErrAlreadyOther
+		return nil, newPlayerError("This player ID is already registered to another Discord account.", ErrAlreadyOther)
 	}
 
 	return s.addNewPlayer(ctx, req)
@@ -157,7 +176,7 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 	}
 
 	if kingdomPlayerCount >= 2 {
-		return nil, ErrMaxPlayersForKingdom
+		return nil, newPlayerError("You have already registered the maximum number of players for this kingdom.", ErrMaxPlayersForKingdom)
 	}
 
 	if err := s.store.AddPlayer(ctx, req); err != nil {
@@ -218,7 +237,7 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 
 	// Treat a blank owner as unowned so a previously unlinked player can be
 	// reclaimed even if the lookup surfaces the document.
-	if err == ErrNotFound || player.UserID == "" {
+	if errors.Is(err, ErrNotFound) || player.UserID == "" {
 		// Player doesn't exist, so let's register them instead.
 		registerReq := NewPlayerRequest{
 			PlayerID:  req.PlayerID,
@@ -227,6 +246,9 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 			GuildID:   req.GuildID,
 		}
 		regResult, err := s.addNewPlayer(ctx, registerReq)
+		if err != nil {
+			return nil, err
+		}
 		return &TransferPlayerResult{
 			Player: Player{
 				PlayerID:  regResult.PlayerID,
@@ -235,15 +257,15 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 				GuildID:   regResult.GuildID,
 			},
 			RegistrationResult: nil,
-		}, err
+		}, nil
 	}
 
 	if player.UserID != req.UserID {
-		return nil, NotYourPlayer
+		return nil, newPlayerError("This player is not registered to your Discord account.", NotYourPlayer)
 	}
 
 	if player.KingdomID == req.NewKingdomID {
-		return nil, ErrAlreadyInKingdom
+		return nil, newPlayerError("This player is already in that kingdom.", ErrAlreadyInKingdom)
 	}
 
 	// Check if the new kingdom has space
@@ -261,7 +283,7 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 	}
 
 	if kingdomPlayerCount >= 2 {
-		return nil, ErrMaxPlayersForKingdom
+		return nil, newPlayerError("You have already registered the maximum number of players for the new kingdom.", ErrMaxPlayersForKingdom)
 	}
 
 	if err := s.store.UpdatePlayerKingdom(ctx, req); err != nil {
@@ -297,7 +319,7 @@ func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequ
 	}
 
 	if existing.UserID != req.UserID {
-		return NotYourPlayer
+		return newPlayerError("This player is not registered to your Discord account.", NotYourPlayer)
 	}
 
 	if err := s.store.UnlinkPlayer(ctx, req); err != nil {

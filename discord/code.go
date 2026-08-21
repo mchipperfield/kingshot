@@ -225,17 +225,12 @@ func (h *GiftCodeHandler) handleRegisterPlayer(s *discordgo.Session, i *discordg
 
 	result, err := h.service.RegisterPlayer(ctx, req)
 	if err != nil {
-		switch {
-		case errors.Is(err, kingshot.ErrMaxPlayersForKingdom):
-			reply(s, i, "You have already registered the maximum number of players for this kingdom.")
-			return
-		case errors.Is(err, kingshot.ErrAlreadySelf):
-			reply(s, i, "This player ID is already registered to your Discord account.")
-			return
-		case errors.Is(err, kingshot.ErrAlreadyOther):
-			reply(s, i, "This player ID is already registered to another Discord account.")
+		var playerErr *kingshot.PlayerError
+		if errors.As(err, &playerErr) {
+			reply(s, i, playerErr.Error())
 			return
 		}
+		slog.Error("failed to register player", "player_id", playerID, "error", err)
 		reply(s, i, "Error registering player.")
 		return
 	}
@@ -359,19 +354,13 @@ func (h *GiftCodeHandler) handleTransferPlayer(s *discordgo.Session, i *discordg
 
 	player, err := h.service.TransferPlayer(ctx, req)
 	if err != nil {
-		switch {
-		case errors.Is(err, kingshot.NotYourPlayer):
-			reply(s, i, "This player is not registered to your Discord account.")
-		case errors.Is(err, kingshot.ErrAlreadyInKingdom):
-			reply(s, i, "This player is already in that kingdom.")
-		case errors.Is(err, kingshot.ErrMaxPlayersForKingdom):
-			reply(s, i, "You have already registered the maximum number of players for the new kingdom.")
-		case errors.Is(err, kingshot.ErrNotFound):
-			reply(s, i, "Player not found. We tried to register it for you instead:\n\n"+formatRegisterResult(*player.RegistrationResult))
-		default:
-			slog.Info("Failed to transfer player", "player_id", playerID, "error", err)
-			reply(s, i, "Error transferring player. Please try again later.")
+		var playerErr *kingshot.PlayerError
+		if errors.As(err, &playerErr) {
+			reply(s, i, playerErr.Error())
+			return
 		}
+		slog.Error("failed to transfer player", "player_id", playerID, "error", err)
+		reply(s, i, "Error transferring player. Please try again later.")
 		return
 	}
 
@@ -466,15 +455,17 @@ func (h *GiftCodeHandler) handleUnlinkConfirmation(s *discordgo.Session, i *disc
 
 	err := h.service.UnlinkPlayer(ctx, req)
 	if err != nil {
+		var playerErr *kingshot.PlayerError
 		switch {
+		case errors.As(err, &playerErr):
+			respondFinal(s, i, playerErr.Error())
 		case errors.Is(err, kingshot.ErrNotFound):
 			respondFinal(s, i, "Player not found.")
-		case errors.Is(err, kingshot.NotYourPlayer):
-			respondFinal(s, i, "This player is not registered to your Discord account.")
 		default:
-			slog.Info("Failed to unlink player", "player_id", playerID, "error", err)
+			slog.Error("failed to unlink player", "player_id", playerID, "error", err)
 			respondFinal(s, i, "Error unlinking player. Please try again later.")
 		}
+		return
 	}
 	respondFinal(s, i, "Player has been unlinked from your Discord account.")
 }

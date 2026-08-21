@@ -152,61 +152,16 @@ func TestAppendUnique(t *testing.T) {
 // TestFormatCodeResult verifies that every CodeResult variant produces a
 // message containing the expected substring.
 func TestFormatCodeResult(t *testing.T) {
-	tests := []struct {
-		name   string
-		result kingshot.CodeResult
-		want   string
-	}{
-		{
-			"store error",
-			kingshot.CodeResult{Code: "X", StoreError: errSentinel},
-			"failed to open player file",
-		},
-		{
-			"api error",
-			kingshot.CodeResult{Code: "X", APIError: errSentinel},
-			"Failed to validate",
-		},
-		{
-			"already active",
-			kingshot.CodeResult{Code: "X", AlreadyActive: true},
-			"already active",
-		},
-		{
-			"already expired",
-			kingshot.CodeResult{Code: "X", AlreadyExpired: true},
-			"expired",
-		},
-		{
-			"invalid",
-			kingshot.CodeResult{Code: "X", Invalid: true},
-			"not valid",
-		},
-		{
-			"invalid player",
-			kingshot.CodeResult{Code: "X", InvalidPlayer: true},
-			"player is invalid",
-		},
-		{
-			"no players",
-			kingshot.CodeResult{Code: "X", Added: true},
-			"no registered players",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatCodeResult(tt.result)
-			if !strings.Contains(strings.ToLower(got), strings.ToLower(tt.want)) {
-				t.Errorf("formatCodeResult() = %q, want to contain %q", got, tt.want)
-			}
-		})
+	result := &kingshot.RedeemResult{Code: "X", Added: true}
+	got := formatCodeResult(result)
+	if !strings.Contains(strings.ToLower(got), "no registered players") {
+		t.Errorf("formatCodeResult() = %q, want no-player success message", got)
 	}
 }
 
 // TestFormatCodeResult_WithPlayers verifies the full redemption report path.
 func TestFormatCodeResult_WithPlayers(t *testing.T) {
-	r := kingshot.CodeResult{
+	r := kingshot.RedeemResult{
 		Code:  "TESTCODE",
 		Added: true,
 		PlayerResults: []kingshot.PlayerRedeemResult{
@@ -214,7 +169,7 @@ func TestFormatCodeResult_WithPlayers(t *testing.T) {
 			{PlayerID: "p2", Message: "Already claimed."},
 		},
 	}
-	got := formatCodeResult(r)
+	got := formatCodeResult(&r)
 	for _, want := range []string{"TESTCODE", "2 players", "p1", "p2", "Successfully redeemed!", "Already claimed."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report missing %q:\n%s", want, got)
@@ -267,7 +222,7 @@ func TestFormatRegisterResult_WithCodeResults(t *testing.T) {
 	r := kingshot.RegisterResult{
 		Success:  true,
 		PlayerID: "pid123",
-		CodeResults: []kingshot.ActiveCodeResult{
+		CodeResults: []kingshot.RegistrationResult{
 			{Code: "CODE1", Message: "Successfully redeemed!"},
 		},
 	}
@@ -283,7 +238,7 @@ func TestRegistrationEmbed(t *testing.T) {
 	embed := registrationEmbed(&kingshot.RegisterResult{
 		Success:  true,
 		PlayerID: "player-1",
-		CodeResults: []kingshot.ActiveCodeResult{
+		CodeResults: []kingshot.RegistrationResult{
 			{Code: "CODE1", Message: "Redeemed successfully."},
 		},
 	})

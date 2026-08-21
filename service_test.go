@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -156,7 +157,7 @@ func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/gift_code":
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(redeemErrCode)})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: redeemErrCode})
 		default:
 			http.NotFound(w, r)
 		}
@@ -164,48 +165,12 @@ func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 	t.Cleanup(srv.Close)
 	return &GiftCodeService{
 		codeStore: newInMemoryCodeStore(),
-		redeemURL: srv.URL + "/gift_code",
-		client:    srv.Client(),
+		client:    &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code", logger: nil},
 		store:     newMapStore(nil),
 	}
 }
 
 // --- API type tests ----------------------------------------------------------
-
-// TestErrCodeUnmarshalJSON verifies that ErrCode correctly deserialises both
-// string and numeric JSON values.
-func TestErrCodeUnmarshalJSON(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  ErrCode
-	}{
-		{"string value", `"20000"`, ErrCode("20000")},
-		{"numeric value", `20000`, ErrCode("20000")},
-		{"error string", `"40008"`, ErrCode("40008")},
-		{"error numeric", `40008`, ErrCode("40008")},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var got ErrCode
-			if err := json.Unmarshal([]byte(tt.input), &got); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
-
-	t.Run("invalid value", func(t *testing.T) {
-		var got ErrCode
-		err := json.Unmarshal([]byte(`true`), &got)
-		if err == nil {
-			t.Fatal("expected error for boolean input, got nil")
-		}
-	})
-}
 
 // TestEncodePayload verifies that EncodePayload produces a deterministic
 // JSON payload that contains a "sign" field and that the signature is correct.
@@ -215,7 +180,7 @@ func TestEncodePayload(t *testing.T) {
 			"fid":  "12345",
 			"time": "1700000000",
 		}
-		payload, err := EncodePayload(data)
+		payload, err := encodePayload(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -237,11 +202,11 @@ func TestEncodePayload(t *testing.T) {
 		data1 := map[string]string{"fid": "abc", "time": "999"}
 		data2 := map[string]string{"fid": "abc", "time": "999"}
 
-		p1, err := EncodePayload(data1)
+		p1, err := encodePayload(data1)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		p2, err := EncodePayload(data2)
+		p2, err := encodePayload(data2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -259,8 +224,8 @@ func TestEncodePayload(t *testing.T) {
 		d1 := map[string]string{"fid": "player1", "time": "1000"}
 		d2 := map[string]string{"fid": "player2", "time": "1000"}
 
-		p1, _ := EncodePayload(d1)
-		p2, _ := EncodePayload(d2)
+		p1, _ := encodePayload(d1)
+		p2, _ := encodePayload(d2)
 
 		var r1, r2 map[string]string
 		json.Unmarshal([]byte(p1), &r1)
@@ -284,7 +249,7 @@ func TestEncodePayload(t *testing.T) {
 		dataToHash := values.Encode() + Key
 
 		dataCopy := map[string]string{"fid": "testplayer", "time": "1700000000"}
-		payload, err := EncodePayload(dataCopy)
+		payload, err := encodePayload(dataCopy)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -305,51 +270,45 @@ func TestEncodePayload(t *testing.T) {
 // TestRedeemResponseDecoding mirrors TestLoginResponseDecoding for RedeemResponse.
 func TestRedeemResponseDecoding(t *testing.T) {
 	raw := fmt.Sprintf(`{"code": 0, "msg": "success", "err_code": "%s"}`, ErrCodeSuccess)
-	var resp RedeemResponse
+	var resp redeemResponse
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.ErrCode != ErrCode(ErrCodeSuccess) {
+	if resp.ErrCode != ErrCodeSuccess {
 		t.Errorf("ErrCode = %q, want %q", resp.ErrCode, ErrCodeSuccess)
 	}
 }
 
 // --- Service logic tests -----------------------------------------------------
 
-// TestInterpretRedeemResult verifies that every known ErrCode maps to the
-// correct outcome flags and message.
+// TestInterpretRedeemResult verifies that every API failure maps to the
+// expected caller-safe CodeError.
 func TestInterpretRedeemResult(t *testing.T) {
 	tests := []struct {
-		errCode     ErrCode
-		wantMsg     string
-		wantExpired bool
-		wantInvalid bool
-		wantLogin   bool
+		errCode  string
+		wantMsg  string
+		wantKind codeErrorKind
 	}{
-		{ErrCodeSuccess, "Successfully redeemed!", false, false, false},
-		{ErrCodeClaimed, "Already claimed.", false, false, false},
-		{ErrCodeExpired, "Code expired or not found.", true, false, false},
-		{ErrCodeNotFound, "Code is not valid.", false, true, false},
-		{ErrCodeLogin, "Unable to login.", false, false, true},
-		{ErrCodeLimitReached, "Redemption Limit Reached", false, false, false},
-		{"99999", "Failed to redeem code.", false, false, false},
+		{ErrCodeClaimed, "Code already claimed.", codeErrorClaimed},
+		{ErrCodeExpired, "This code has expired.", codeErrorExpired},
+		{ErrCodeNotFound, "This code is invalid.", codeErrorInvalid},
+		{ErrCodeLogin, "The player used to validate this code is invalid.", codeErrorLogin},
+		{ErrCodeLimitReached, "Redemption limit reached.", codeErrorLimitReached},
+		{"99999", "Failed to redeem code.", codeErrorUnknown},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.errCode), func(t *testing.T) {
-			got := interpretRedeemResult(tt.errCode)
-			if got.msg != tt.wantMsg {
-				t.Errorf("msg = %q, want %q", got.msg, tt.wantMsg)
+			got := interpretRedeemResult(&redeemResponse{ErrCode: tt.errCode})
+			if got.Error() != tt.wantMsg {
+				t.Errorf("Error() = %q, want %q", got.Error(), tt.wantMsg)
 			}
-			if got.codeExpired != tt.wantExpired {
-				t.Errorf("codeExpired = %v, want %v", got.codeExpired, tt.wantExpired)
-			}
-			if got.codeInvalid != tt.wantInvalid {
-				t.Errorf("codeInvalid = %v, want %v", got.codeInvalid, tt.wantInvalid)
-			}
-			if got.loginFailed != tt.wantLogin {
-				t.Errorf("loginFailed = %v, want %v", got.loginFailed, tt.wantLogin)
+			if got.kind != tt.wantKind {
+				t.Errorf("kind = %v, want %v", got.kind, tt.wantKind)
 			}
 		})
+	}
+	if got := interpretRedeemResult(&redeemResponse{ErrCode: ErrCodeSuccess}); got != nil {
+		t.Errorf("success returned error %v", got)
 	}
 }
 
@@ -358,9 +317,10 @@ func TestInterpretRedeemResult(t *testing.T) {
 func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	t.Run("already active", func(t *testing.T) {
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore("EXISTINGCODE"), store: newMapStore(nil)}
-		result := svc.ProcessNewCode(t.Context(), "EXISTINGCODE")
-		if !result.AlreadyActive {
-			t.Errorf("expected AlreadyActive=true, got %+v", result)
+		result, err := svc.ProcessNewCode(t.Context(), "EXISTINGCODE")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
 		}
 	})
 
@@ -368,17 +328,19 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		cs := newInMemoryCodeStore()
 		cs.Add(t.Context(), Code{Value: "EXPIREDCODE", ExpiredAt: time.Now()})
 		svc := &GiftCodeService{codeStore: cs, store: newMapStore(nil)}
-		result := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
-		if !result.AlreadyExpired {
-			t.Errorf("expected AlreadyExpired=true, got %+v", result)
+		result, err := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
 		}
 	})
 
 	t.Run("store error", func(t *testing.T) {
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("store error")}}
-		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
+		storeErr := errors.New("store error")
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{storeErr}}
+		result, err := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result != nil || !errors.Is(err, storeErr) {
+			t.Fatalf("got result=%+v err=%v, want store error", result, err)
 		}
 	})
 
@@ -387,9 +349,9 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 			codeStore: &testCodeStore{findErr: errors.New("code lookup failed")},
 			store:     newMapStore(nil),
 		}
-		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
+		result, err := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result != nil || err == nil {
+			t.Fatalf("got result=%+v err=%v, want lookup error", result, err)
 		}
 	})
 
@@ -398,18 +360,18 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 			codeStore: &testCodeStore{addErr: errors.New("code add failed")},
 			store:     newMapStore(nil),
 		}
-		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
-		}
-		if result.Added {
-			t.Error("expected failed code add not to report success")
+		result, err := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result != nil || err == nil {
+			t.Fatalf("got result=%+v err=%v, want add error", result, err)
 		}
 	})
 
 	t.Run("no registered players adds code to active list", func(t *testing.T) {
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: newMapStore(nil)}
-		result := svc.ProcessNewCode(t.Context(), "FRESHCODE")
+		result, err := svc.ProcessNewCode(t.Context(), "FRESHCODE")
+		if err != nil {
+			t.Fatalf("ProcessNewCode() error = %v", err)
+		}
 		if !result.Added {
 			t.Errorf("expected Added=true, got %+v", result)
 		}
@@ -419,6 +381,53 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		c, found, _ := svc.codeStore.Find(t.Context(), "FRESHCODE")
 		if !found || c.IsExpired() {
 			t.Error("expected FRESHCODE to be in active codes")
+		}
+	})
+
+	t.Run("invalid API response returns CodeError", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeNotFound)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "INVALID")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		}
+		if codeErr.Error() != "This code is invalid." {
+			t.Fatalf("CodeError.Error() = %q", codeErr.Error())
+		}
+	})
+
+	t.Run("unknown API response returns operational error", func(t *testing.T) {
+		svc := mockKingShotAPI(t, "99999")
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "UNKNOWN")
+		var codeErr *CodeError
+		if result != nil || err == nil || errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want non-CodeError", result, err)
+		}
+	})
+
+	t.Run("successful API response returns redemption result", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeSuccess)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1", GuildID: "g1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "VALID")
+		if err != nil {
+			t.Fatalf("ProcessNewCode() error = %v", err)
+		}
+		if result == nil || !result.Added || len(result.PlayerResults) != 1 {
+			t.Fatalf("ProcessNewCode() result = %+v", result)
+		}
+		if result.PlayerResults[0].Message != "Successfully redeemed!" {
+			t.Fatalf("player result = %+v", result.PlayerResults[0])
 		}
 	})
 }
@@ -463,7 +472,7 @@ func TestGiftCodeService_RegisterPlayerCodeStoreErrors(t *testing.T) {
 func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+		json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -472,15 +481,14 @@ func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
 		store: newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 		}),
-		redeemURL: srv.URL + "/gift_code",
-		client:    srv.Client(),
+		client: &Client{redeemURL: srv.URL + "/gift_code", Client: srv.Client(), logger: slog.Default()}, // 1 request per second
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	result := svc.ProcessNewCode(ctx, "CODE")
-	if result.APIError == nil || !errors.Is(result.APIError, context.Canceled) {
-		t.Fatalf("expected caller cancellation, got %+v", result)
+	result, err := svc.ProcessNewCode(ctx, "CODE")
+	if result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("got result=%+v err=%v, want context cancellation", result, err)
 	}
 }
 
@@ -488,7 +496,7 @@ func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
 func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 	t.Run("new player", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &Client{Client: httptest.NewServer(nil).Client(), redeemURL: "http://example.com/gift_code"}}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"}
 		_, err := svc.RegisterPlayer(t.Context(), req)
 		if err != nil {
@@ -551,7 +559,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 
 	t.Run("player not found, registers new player", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
 		player, err := svc.TransferPlayer(t.Context(), req)
 		if err != nil {
@@ -570,7 +578,7 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0", GuildID: "g0"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
 		player, _ := svc.TransferPlayer(t.Context(), req)
 		if player == nil {
@@ -691,7 +699,7 @@ func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 		"p1": {PlayerID: "p1", UserID: ""},
 	})
 	store.unlinked["p1"] = true
-	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil}
 	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
 	_, err := svc.RegisterPlayer(t.Context(), req)
 	if err != nil {
@@ -713,7 +721,7 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 	store := newMapStore(map[string]*Player{
 		"p1": {PlayerID: "p1", UserID: "", KingdomID: "k1", GuildID: "old-guild"},
 	})
-	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil}
 	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
 	_, err := svc.RegisterPlayer(t.Context(), req)
 	if err != nil {
@@ -780,21 +788,20 @@ func TestGiftCodeService_codeStoreLookup(t *testing.T) {
 // TestGiftCodeService_redeemForPlayer tests the redeem → interpret
 // pipeline for a single player using a mock HTTP server.
 func TestGiftCodeService_redeemForPlayer(t *testing.T) {
-	tests := []struct {
-		name          string
+	tests := map[string]struct {
 		redeemErrCode string
 		wantMsg       string
 	}{
-		{"success", ErrCodeSuccess, "Successfully redeemed!"},
-		{"already claimed", ErrCodeClaimed, "Already claimed."},
-		{"login error from api", ErrCodeLogin, "Unable to login."},
-		{"unknown error code", "99999", "Failed to redeem code."},
+		"success":              {ErrCodeSuccess, "Successfully redeemed!"},
+		"already claimed":      {ErrCodeClaimed, "Code already claimed."},
+		"login error from api": {ErrCodeLogin, "The player used to validate this code is invalid."},
+		"unknown error code":   {"99999", "Failed to redeem code."},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			svc := mockKingShotAPI(t, tt.redeemErrCode)
 			player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
-			got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
+			got := redemptionMessage(svc.redeemForPlayer(t.Context(), player, "TESTCODE"))
 			if got != tt.wantMsg {
 				t.Errorf("got %q, want %q", got, tt.wantMsg)
 			}
@@ -810,14 +817,13 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		t.Cleanup(srv.Close)
 		svc := &GiftCodeService{
 			codeStore: newInMemoryCodeStore(),
-			redeemURL: srv.URL + "/gift_code",
-			client:    srv.Client(),
+			client:    &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"},
 			store:     newMapStore(nil),
 		}
 		player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
 		got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
-		if got != "Error redeeming code." {
-			t.Errorf("got %q, want %q", got, "Error redeeming code.")
+		if redemptionMessage(got) != "Failed to redeem code." {
+			t.Errorf("got %q, want %q", redemptionMessage(got), "Failed to redeem code.")
 		}
 	})
 
@@ -825,17 +831,17 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		var requests atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if requests.Add(1) < 3 {
-				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+				json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeTimeoutRetry})
 				return
 			}
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Successfully redeemed!" {
-			t.Fatalf("got %q, want successful redemption", got)
+		if redemptionMessage(got) != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != 3 {
 			t.Fatalf("got %d requests, want 3", gotRequests)
@@ -846,14 +852,14 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		var requests atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requests.Add(1)
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeTimeoutRetry})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Failed to redeem code." {
-			t.Fatalf("got %q, want exhausted retry result", got)
+		if redemptionMessage(got) != "Failed to redeem code." {
+			t.Fatalf("got %q, want exhausted retry result", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != maxRedeemAttempts {
 			t.Fatalf("got %d requests, want %d", gotRequests, maxRedeemAttempts)
@@ -867,14 +873,14 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 				w.Write([]byte("temporarily unavailable"))
 				return
 			}
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Successfully redeemed!" {
-			t.Fatalf("got %q, want successful redemption", got)
+		if redemptionMessage(got) != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != 2 {
 			t.Fatalf("got %d requests, want 2", gotRequests)
@@ -886,17 +892,17 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if requests.Add(1) == 1 {
 				w.WriteHeader(http.StatusTooManyRequests)
-				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+				json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeTimeoutRetry})
 				return
 			}
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Successfully redeemed!" {
-			t.Fatalf("got %q, want successful redemption", got)
+		if redemptionMessage(got) != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != 2 {
 			t.Fatalf("got %d requests, want 2", gotRequests)

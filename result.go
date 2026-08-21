@@ -1,16 +1,10 @@
 package kingshot
 
-// CodeResult is the structured outcome of a ProcessNewCode call.
-type CodeResult struct {
-	Code           string
-	AlreadyActive  bool
-	AlreadyExpired bool
-	Invalid        bool
-	InvalidPlayer  bool
-	StoreError     error
-	APIError       error
-	Added          bool
-	PlayerResults  []PlayerRedeemResult
+// RedeemResult describes a successfully processed gift code.
+type RedeemResult struct {
+	Code          string
+	Added         bool
+	PlayerResults []PlayerRedeemResult
 }
 
 // PlayerRedeemResult is the redemption outcome for a single player.
@@ -32,12 +26,12 @@ type RegisterResult struct {
 	MaxPlayersForKingdomReached bool
 	StoreError                  error
 	APIError                    error
-	CodeResults                 []ActiveCodeResult
+	CodeResults                 []RegistrationResult
 	Success                     bool
 }
 
-// ActiveCodeResult is the redemption outcome for a single active code during registration.
-type ActiveCodeResult struct {
+// RegistrationResult is the redemption outcome for a single active code during registration.
+type RegistrationResult struct {
 	Code    string
 	Message string
 }

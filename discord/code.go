@@ -261,7 +261,17 @@ func (h *GiftCodeHandler) handleAddCode() func(s *discordgo.Session, i *discordg
 		ctx, cancel := context.WithTimeout(context.Background(), codeProcessingTimeout)
 		defer cancel()
 
-		result := h.service.ProcessNewCode(ctx, newCode)
+		result, err := h.service.ProcessNewCode(ctx, newCode)
+		if err != nil {
+			var codeErr *kingshot.CodeError
+			if errors.As(err, &codeErr) {
+				reply(s, i, codeErr.Error())
+				return
+			}
+			slog.Error("failed to redeem code", "code", newCode, "error", err)
+			reply(s, i, "Failed to redeem code.")
+			return
+		}
 		if result.Added && len(result.PlayerResults) > 0 {
 			posted := postGuildRedemptionResults(ctx, s, h.store, result.Code, result.PlayerResults)
 			reply(s, i, formatCodeDispatchResult(result.Code, len(posted)))

@@ -5,11 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 // GiftCodeService manages gift code state and interacts with the KingShot API.
@@ -18,8 +15,7 @@ type GiftCodeService struct {
 	mu        sync.Mutex
 	codeStore CodeStore
 	store     PlayerStore
-	client    *http.Client
-	redeemURL string
+	client    *Client
 }
 
 // NewService returns a GiftCodeService using the supplied PlayerStore
@@ -28,85 +24,83 @@ func NewService(store PlayerStore, cs CodeStore) *GiftCodeService {
 	return &GiftCodeService{
 		store:     store,
 		codeStore: cs,
-		redeemURL: defaultRedeemURL,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &transport{
-				limiter: rate.NewLimiter(rate.Every(2*time.Second), 1),
-			},
-		},
+		client:    NewClient(),
 	}
 }
 
 // ProcessNewCode validates code against the KingShot API and redeems it for
 // all registered players. It is safe to call concurrently. ctx bounds all
 // store and HTTP calls made while processing code.
-func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeResult {
+func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*RedeemResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if c, found, err := s.codeStore.Find(ctx, code); err != nil {
-		return CodeResult{Code: code, StoreError: err}
+		return nil, fmt.Errorf("code service: find code %s: %w", code, err)
 	} else if found {
 		if !c.IsExpired() {
-			return CodeResult{Code: code, AlreadyActive: true}
+			return nil, newCodeError("This code is already active.", codeErrorActive, nil)
 		}
-		return CodeResult{Code: code, AlreadyExpired: true}
+		return nil, newCodeError("This code has expired and cannot be re-added.", codeErrorExpired, nil)
 	}
 
 	players, err := s.store.Players(ctx)
 	if err != nil {
-		return CodeResult{Code: code, StoreError: err}
+		return nil, fmt.Errorf("code service: fetch players: %w", err)
 	}
 
 	if len(players) == 0 {
 		if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
-			return CodeResult{Code: code, StoreError: err}
+			return nil, fmt.Errorf("code service: add code %s: %w", code, err)
 		}
 		slog.Info("code added with no registered players", "code", code)
-		return CodeResult{Code: code, Added: true}
+		return &RedeemResult{Code: code, Added: true}, nil
 	}
 
 	firstPlayer := players[0]
-	redeemResp, err := s.redeemGiftCode(ctx, firstPlayer.PlayerID, firstPlayer.KingdomID, code)
+	redeemResp, err := s.client.redeemGiftCode(ctx, firstPlayer.PlayerID, firstPlayer.KingdomID, code)
 	if err != nil {
-		slog.Error("failed to validate new code", "error", err, "code", code)
-		return CodeResult{Code: code, APIError: err}
+		return nil, fmt.Errorf("code service: validate code %s: %w", code, err)
 	}
 
 	slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
 
-	outcome := interpretRedeemResult(redeemResp.ErrCode)
-	if outcome.codeExpired {
+	outcome := interpretRedeemResult(redeemResp)
+	if outcome != nil && outcome.kind == codeErrorExpired {
 		if err := s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()}); err != nil {
-			return CodeResult{Code: code, StoreError: err}
+			return nil, fmt.Errorf("code service: record expired code %s: %w", code, err)
 		}
-		return CodeResult{Code: code, AlreadyExpired: true}
+		return nil, outcome
 	}
-	if outcome.codeInvalid {
-		return CodeResult{Code: code, Invalid: true}
-	}
-	if outcome.loginFailed {
+	if outcome != nil && (outcome.kind == codeErrorInvalid || outcome.kind == codeErrorLogin) {
 		// This error code is now repurposed to mean the player is invalid
-		return CodeResult{Code: code, InvalidPlayer: true}
+		return nil, outcome
+	}
+	if outcome != nil && outcome.kind == codeErrorUnknown {
+		return nil, fmt.Errorf("code service: unexpected redemption response: %w", redeemResp)
 	}
 
 	if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
-		return CodeResult{Code: code, StoreError: err}
+		return nil, fmt.Errorf("code service: add code %s: %w", code, err)
 	}
 	slog.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
-	results = append(results, PlayerRedeemResult{GuildID: firstPlayer.GuildID, PlayerID: firstPlayer.PlayerID, Message: outcome.msg})
+	firstPlayerMessage := "Successfully redeemed!"
+	if outcome != nil {
+		firstPlayerMessage = outcome.Error()
+	}
+	results = append(results, PlayerRedeemResult{GuildID: firstPlayer.GuildID, PlayerID: firstPlayer.PlayerID, Message: firstPlayerMessage})
 	for _, player := range players[1:] {
+		result := s.redeemForPlayer(ctx, player, code)
 		results = append(results, PlayerRedeemResult{
 			GuildID:  player.GuildID,
 			PlayerID: player.PlayerID,
-			Message:  s.redeemForPlayer(ctx, player, code),
+			Message:  redemptionMessage(result),
 		})
 	}
 
-	return CodeResult{Code: code, Added: true, PlayerResults: results}
+	return &RedeemResult{Code: code, Added: true, PlayerResults: results}, nil
 }
 
 // NewPlayerRequest is the set of parameters for registering a new player.
@@ -202,6 +196,14 @@ var (
 	NotYourPlayer           = errors.New("not your player")
 )
 
+// TransferPlayerRequest is the input to the TransferPlayer service method.
+type TransferPlayerRequest struct {
+	PlayerID     string
+	NewKingdomID string
+	UserID       string
+	GuildID      string
+}
+
 // TransferPlayer transfers req.PlayerID to req.NewKingdomID, or registers the
 // player if not already known. ctx bounds all store and HTTP calls made while
 // processing req.
@@ -275,6 +277,13 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 	}, nil
 }
 
+// UnlinkPlayerRequest is the input to the UnlinkPlayer service method.
+type UnlinkPlayerRequest struct {
+	PlayerID string
+	UserID   string
+	GuildID  string
+}
+
 // UnlinkPlayer removes req.UserID's ownership of req.PlayerID and marks it
 // inactive so it is no longer redeemed for new codes. ctx bounds all store
 // calls made while processing req.
@@ -304,50 +313,118 @@ func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) (
 	return s.store.FindByUser(ctx, userID)
 }
 
-// redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.
-func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, code string) string {
-	resp, err := s.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
-	if err != nil {
-		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code)
-		return "Error redeeming code."
+type codeErrorKind uint8
+
+const (
+	codeErrorUnknown codeErrorKind = iota
+	codeErrorActive
+	codeErrorClaimed
+	codeErrorExpired
+	codeErrorInvalid
+	codeErrorLogin
+	codeErrorLimitReached
+)
+
+// CodeError is a caller-safe gift-code failure. Error may be shown directly
+// to a user.
+type CodeError struct {
+	message string
+	kind    codeErrorKind
+	cause   error
+}
+
+func newCodeError(message string, kind codeErrorKind, cause error) *CodeError {
+	return &CodeError{message: message, kind: kind, cause: cause}
+}
+
+func (e *CodeError) Error() string {
+	return e.message
+}
+
+func (e *CodeError) Unwrap() error {
+	return e.cause
+}
+
+// interpretRedeemResult maps a KingShot API response to a caller-safe error.
+func interpretRedeemResult(resp *redeemResponse) *CodeError {
+	if resp.ErrCode == ErrCodeSuccess {
+		return nil
 	}
-	slog.Info("redeem response", "player_id", player.PlayerID, "code", code, "err_code", resp.ErrCode, "message", resp.Message)
-	return interpretRedeemResult(resp.ErrCode).msg
+	switch resp.ErrCode {
+	case ErrCodeClaimed:
+		return newCodeError("Code already claimed.", codeErrorClaimed, resp)
+	case ErrCodeExpired:
+		return newCodeError("This code has expired.", codeErrorExpired, resp)
+	case ErrCodeNotFound:
+		return newCodeError("This code is invalid.", codeErrorInvalid, resp)
+	case ErrCodeLogin:
+		return newCodeError("The player used to validate this code is invalid.", codeErrorLogin, resp)
+	case ErrCodeLimitReached:
+		return newCodeError("Redemption limit reached.", codeErrorLimitReached, resp)
+	default:
+		return newCodeError("Failed to redeem code.", codeErrorUnknown, resp)
+	}
+}
+
+// redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.
+func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, code string) error {
+	resp, err := s.client.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
+	if err != nil {
+		return fmt.Errorf("code service: redeem code %s for player %s: %w", code, player.PlayerID, err)
+	}
+	codeErr := interpretRedeemResult(resp)
+	if codeErr == nil {
+		return nil
+	}
+	return codeErr
+}
+
+func redemptionMessage(err error) string {
+	if err == nil {
+		return "Successfully redeemed!"
+	}
+	var codeErr *CodeError
+	if errors.As(err, &codeErr) {
+		return codeErr.Error()
+	}
+	return "Failed to redeem code."
 }
 
 // redeemActiveCodes redeems all currently active codes for playerID and returns
 // a slice of per-code results. Caller must hold s.mu.
-func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) ([]ActiveCodeResult, error) {
+func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) ([]RegistrationResult, error) {
 	active, err := s.codeStore.ActiveCodes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetch active codes: %w", err)
+		return nil, fmt.Errorf("code service: fetch active codes: %w", err)
 	}
 	if len(active) == 0 {
 		return nil, nil
 	}
 
-	var results []ActiveCodeResult
+	var results []RegistrationResult
 	var codesToRemove []string
 
 	for _, code := range active {
-		redeemResp, err := s.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
+		redeemResp, err := s.client.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
 		if err != nil {
-			slog.Error("failed to redeem gift code after registration", "error", err, "code", code, "player_id", player.PlayerID)
-			results = append(results, ActiveCodeResult{Code: code, Message: "Error redeeming code."})
+			results = append(results, RegistrationResult{Code: code, Message: "Error redeeming code."})
 			continue
 		}
-		slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", player.PlayerID)
 
-		outcome := interpretRedeemResult(redeemResp.ErrCode)
-		if outcome.codeExpired || outcome.codeInvalid {
-			codesToRemove = append(codesToRemove, code)
+		result := interpretRedeemResult(redeemResp)
+		if result != nil {
+			if result.kind == codeErrorExpired || result.kind == codeErrorInvalid {
+				codesToRemove = append(codesToRemove, code)
+			}
+			results = append(results, RegistrationResult{Code: code, Message: result.Error()})
+		} else {
+			results = append(results, RegistrationResult{Code: code, Message: "Successfully redeemed."})
 		}
-		results = append(results, ActiveCodeResult{Code: code, Message: outcome.msg})
 	}
 
 	if len(codesToRemove) > 0 {
 		if err := s.codeStore.RemoveActive(ctx, codesToRemove...); err != nil {
-			return results, err
+			return results, fmt.Errorf("code service: remove active codes: %w", err)
 		}
 	}
 

@@ -67,22 +67,9 @@ func redemptionEmbeds(code string, results []kingshot.PlayerRedeemResult) []*dis
 	return embeds
 }
 
-// formatCodeResult formats a CodeResult as a Discord-ready message string.
-func formatCodeResult(r kingshot.CodeResult) string {
-	switch {
-	case r.StoreError != nil:
-		return fmt.Sprintf("Code `%s` has not been added, as we failed to open player file.", r.Code)
-	case r.APIError != nil:
-		return fmt.Sprintf("Failed to validate code `%s` due to an error. The code has not been added.", r.Code)
-	case r.AlreadyActive:
-		return fmt.Sprintf("Code `%s` is already active.", r.Code)
-	case r.AlreadyExpired:
-		return fmt.Sprintf("Code `%s` has expired and cannot be re-added.", r.Code)
-	case r.Invalid:
-		return fmt.Sprintf("Code `%s` is not valid and was not added.", r.Code)
-	case r.InvalidPlayer:
-		return fmt.Sprintf("Code `%s` could not be validated as the player is invalid.", r.Code)
-	case r.Added && len(r.PlayerResults) == 0:
+// formatCodeResult formats a successful redemption response for Discord.
+func formatCodeResult(r *kingshot.RedeemResult) string {
+	if len(r.PlayerResults) == 0 {
 		return fmt.Sprintf("There are no registered players, but code `%s` has been added to the active list.", r.Code)
 	}
 

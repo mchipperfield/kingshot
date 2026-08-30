@@ -23,6 +23,7 @@ func registrationEmbed(result kingshot.RegisterResult) *discordgo.MessageEmbed {
 		Title:       "Player Registered",
 		Description: "Your player is ready for gift-code redemptions.",
 		Color:       embedColor,
+		Footer:      &discordgo.MessageEmbedFooter{Text: "https://buymeacoffee.com/goaferlx", IconURL: thumbnailURL},
 		Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    "Goaf's Herald",
@@ -49,6 +50,7 @@ func redemptionEmbeds(code string, results []kingshot.PlayerRedeemResult) []*dis
 			Title:       fmt.Sprintf("Gift Code %s", code),
 			Description: fmt.Sprintf("Redemption results for %d player(s).", len(results)),
 			Color:       embedColor,
+			Footer:      &discordgo.MessageEmbedFooter{Text: "https://buymeacoffee.com/goaferlx", IconURL: thumbnailURL},
 			Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
 			Author: &discordgo.MessageEmbedAuthor{
 				Name:    "Goaf's Herald",

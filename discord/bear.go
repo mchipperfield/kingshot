@@ -166,6 +166,7 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 				Description: fmt.Sprintf("Bear starts at <t:%d:F> — rally up!", r.Next.Unix()),
 				Color:       11261619,
 				Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: thumbnailURL},
+				Footer:      &discordgo.MessageEmbedFooter{Text: "https://buymeacoffee.com/goaferlx", IconURL: thumbnailURL},
 				Author: &discordgo.MessageEmbedAuthor{
 					Name:    "Goaf's Herald",
 					IconURL: thumbnailURL,

@@ -66,7 +66,7 @@ func (s *memoryBearStore) GetAllBearStatuses(_ context.Context) ([]BearStatus, e
 
 func TestBearServiceSetAndGetBearWithoutCache(t *testing.T) {
 	store := newMemoryBearStore()
-	service := NewBearService(store)
+	service := NewBearService(store, nil)
 	setTime := time.Now().Add(time.Hour)
 
 	if err := service.SetBear(context.Background(), "guild-1", "1", setTime, "user-1"); err != nil {
@@ -103,7 +103,7 @@ func TestBearStatusReminders(t *testing.T) {
 
 func TestBearServiceTickPersistsNextBearTime(t *testing.T) {
 	store := newMemoryBearStore()
-	service := NewBearService(store)
+	service := NewBearService(store, nil)
 	previous := time.Now().Add(-time.Hour)
 	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: previous, RemindersEnabled: true}
 	store.statuses[bearKey(status.GuildID, status.Bear)] = status
@@ -124,7 +124,7 @@ func TestBearServiceTickPersistsNextBearTime(t *testing.T) {
 
 func TestBearServiceTickSendsReminderOncePerOccurrence(t *testing.T) {
 	store := newMemoryBearStore()
-	service := NewBearService(store)
+	service := NewBearService(store, nil)
 	now := time.Now()
 	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: now.Add(10 * time.Minute), RemindersEnabled: true}
 	store.statuses[bearKey(status.GuildID, status.Bear)] = status
@@ -153,7 +153,7 @@ func TestBearServiceTickSendsReminderOncePerOccurrence(t *testing.T) {
 
 func TestBearServiceDisableBearReminders(t *testing.T) {
 	store := newMemoryBearStore()
-	service := NewBearService(store)
+	service := NewBearService(store, nil)
 	status := BearStatus{Bear: "1", GuildID: "guild-1", Next: time.Now().Add(10 * time.Minute), RemindersEnabled: true}
 	store.statuses[bearKey(status.GuildID, status.Bear)] = status
 

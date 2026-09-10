@@ -14,13 +14,21 @@ type BearService struct {
 	sentReminders map[string]time.Time
 	reminderChan  chan Reminder
 	mu            sync.Mutex
+	logger        *slog.Logger
 }
 
-func NewBearService(store BearStore) *BearService {
+// NewBearService returns a BearService using the supplied BearStore.
+// A nil logger falls back to slog.Default(). The logger is tagged with a
+// "component" attribute so its log lines can be attributed to this service.
+func NewBearService(store BearStore, logger *slog.Logger) *BearService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &BearService{
 		store:         store,
 		sentReminders: make(map[string]time.Time),
 		reminderChan:  make(chan Reminder, 64),
+		logger:        logger.With("component", "bear_service"),
 	}
 }
 
@@ -95,14 +103,14 @@ const bearInterval time.Duration = 48 * time.Hour
 func (s *BearService) Start(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	slog.Info("bear reminder scheduler started", "interval", time.Minute)
+	s.logger.Info("bear reminder scheduler started", "interval", time.Minute)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-ticker.C:
 			if err := s.tick(ctx, now); err != nil {
-				slog.Info("kingshot: tick bears", "error", err)
+				s.logger.Info("kingshot: tick bears", "error", err)
 			}
 		}
 	}
@@ -132,7 +140,7 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			if err := s.store.UpdateBearNext(ctx, status.GuildID, status.Bear, next); err != nil {
 				return fmt.Errorf("update bear next: %w", err)
 			}
-			slog.Info("bear event advanced", "guild_id", status.GuildID, "bear_id", status.Bear, "next", next)
+			s.logger.Info("bear event advanced", "guild_id", status.GuildID, "bear_id", status.Bear, "next", next)
 			status.Next = next
 			delete(s.sentReminders, key)
 		}
@@ -146,7 +154,7 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			select {
 			case s.reminderChan <- reminder:
 				s.sentReminders[key] = status.Next
-				slog.Info("bear reminder queued", "guild_id", status.GuildID, "bear_id", status.Bear, "next", status.Next)
+				s.logger.Info("bear reminder queued", "guild_id", status.GuildID, "bear_id", status.Bear, "next", status.Next)
 			default:
 			}
 		}

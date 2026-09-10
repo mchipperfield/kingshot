@@ -21,11 +21,13 @@ type GiftCodeService struct {
 
 // NewService returns a GiftCodeService using the supplied PlayerStore
 // and CodeStore implementations, such as the Firestore-backed stores.
-// A nil logger falls back to slog.Default().
+// A nil logger falls back to slog.Default(). The logger is tagged with a
+// "component" attribute so its log lines can be attributed to this service.
 func NewService(store PlayerStore, cs CodeStore, logger *slog.Logger) *GiftCodeService {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	logger = logger.With("component", "code_service")
 	return &GiftCodeService{
 		store:     store,
 		codeStore: cs,

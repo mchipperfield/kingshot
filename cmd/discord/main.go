@@ -62,11 +62,11 @@ func main() {
 	playerStore := firestore.NewPlayerStore(client)
 	codeStore := firestore.NewCodeStore(client)
 
-	svc := kingshot.NewService(playerStore, codeStore, slog.Default())
+	svc := kingshot.NewService(playerStore, codeStore, logger.Logger)
 
 	allianceStore := firestore.NewAllianceStore(client)
 	giftCodeHandler := discord.NewGiftCodeHandler(svc, allianceStore)
-	bearService := kingshot.NewBearService(inmem.NewBearStore(firestore.NewBearStore(client)))
+	bearService := kingshot.NewBearService(inmem.NewBearStore(firestore.NewBearStore(client)), logger.Logger)
 
 	bearHandler := discord.NewBearHandler(bearService, allianceStore)
 	accessHandler := discord.NewAccessHandler(allianceStore)

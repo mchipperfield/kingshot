@@ -63,11 +63,11 @@ func (s *BearStore) SetBear(ctx context.Context, guildId, bearID string, setTime
 	s.mu.Lock()
 	s.cache[guildId+"/"+bearID] = cacheEntry{
 		status: kingshot.BearStatus{
-			Bear:    bearID,
-			SetAt:   now,
-			SetBy:   setBy,
-			Next:    setTime,
-			GuildID: guildId,
+			Bear:             bearID,
+			SetAt:            now,
+			SetBy:            setBy,
+			Next:             setTime,
+			GuildID:          guildId,
 			RemindersEnabled: true,
 		},
 		expiresAt: now.Add(s.ttl),

@@ -152,61 +152,16 @@ func TestAppendUnique(t *testing.T) {
 // TestFormatCodeResult verifies that every CodeResult variant produces a
 // message containing the expected substring.
 func TestFormatCodeResult(t *testing.T) {
-	tests := []struct {
-		name   string
-		result kingshot.CodeResult
-		want   string
-	}{
-		{
-			"store error",
-			kingshot.CodeResult{Code: "X", StoreError: errSentinel},
-			"failed to open player file",
-		},
-		{
-			"api error",
-			kingshot.CodeResult{Code: "X", APIError: errSentinel},
-			"Failed to validate",
-		},
-		{
-			"already active",
-			kingshot.CodeResult{Code: "X", AlreadyActive: true},
-			"already active",
-		},
-		{
-			"already expired",
-			kingshot.CodeResult{Code: "X", AlreadyExpired: true},
-			"expired",
-		},
-		{
-			"invalid",
-			kingshot.CodeResult{Code: "X", Invalid: true},
-			"not valid",
-		},
-		{
-			"invalid player",
-			kingshot.CodeResult{Code: "X", InvalidPlayer: true},
-			"player is invalid",
-		},
-		{
-			"no players",
-			kingshot.CodeResult{Code: "X", Added: true},
-			"no registered players",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatCodeResult(tt.result)
-			if !strings.Contains(strings.ToLower(got), strings.ToLower(tt.want)) {
-				t.Errorf("formatCodeResult() = %q, want to contain %q", got, tt.want)
-			}
-		})
+	result := &kingshot.RedeemResult{Code: "X", Added: true}
+	got := formatCodeResult(result)
+	if !strings.Contains(strings.ToLower(got), "no registered players") {
+		t.Errorf("formatCodeResult() = %q, want no-player success message", got)
 	}
 }
 
 // TestFormatCodeResult_WithPlayers verifies the full redemption report path.
 func TestFormatCodeResult_WithPlayers(t *testing.T) {
-	r := kingshot.CodeResult{
+	r := kingshot.RedeemResult{
 		Code:  "TESTCODE",
 		Added: true,
 		PlayerResults: []kingshot.PlayerRedeemResult{
@@ -214,7 +169,7 @@ func TestFormatCodeResult_WithPlayers(t *testing.T) {
 			{PlayerID: "p2", Message: "Already claimed."},
 		},
 	}
-	got := formatCodeResult(r)
+	got := formatCodeResult(&r)
 	for _, want := range []string{"TESTCODE", "2 players", "p1", "p2", "Successfully redeemed!", "Already claimed."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report missing %q:\n%s", want, got)
@@ -236,60 +191,22 @@ func TestFormatRedemptionReport(t *testing.T) {
 	}
 }
 
-// TestFormatRegisterResult verifies every RegisterResult variant.
-func TestFormatRegisterResult(t *testing.T) {
-	tests := []struct {
-		name   string
-		result kingshot.RegisterResult
-		want   string
-	}{
-		{"api error", kingshot.RegisterResult{APIError: errSentinel}, "Error validating"},
-		{"invalid player", kingshot.RegisterResult{InvalidPlayer: true}, "Invalid player"},
-		{"store error", kingshot.RegisterResult{StoreError: errSentinel}, "Error registering"},
-		{"already self", kingshot.RegisterResult{AlreadySelf: true}, "already registered to your"},
-		{"already other", kingshot.RegisterResult{AlreadyOther: true}, "already registered to another"},
-		{"max players for kingdom", kingshot.RegisterResult{MaxPlayersForKingdomReached: true}, "maximum number of players for this kingdom"},
-		{"success no codes", kingshot.RegisterResult{Success: true, PlayerID: "pid123"}, "pid123"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatRegisterResult(tt.result)
-			if !strings.Contains(got, tt.want) {
-				t.Errorf("formatRegisterResult() = %q, want to contain %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestFormatRegisterResult_WithCodeResults verifies the code redemption section.
-func TestFormatRegisterResult_WithCodeResults(t *testing.T) {
-	r := kingshot.RegisterResult{
-		Success:  true,
-		PlayerID: "pid123",
-		CodeResults: []kingshot.ActiveCodeResult{
-			{Code: "CODE1", Message: "Successfully redeemed!"},
-		},
-	}
-	got := formatRegisterResult(r)
-	for _, want := range []string{"pid123", "CODE1", "Successfully redeemed!"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("result missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func TestRegistrationEmbed(t *testing.T) {
-	embed := registrationEmbed(kingshot.RegisterResult{
-		Success:  true,
-		PlayerID: "player-1",
-		CodeResults: []kingshot.ActiveCodeResult{
+	embed := registrationEmbed(&kingshot.RegisterResult{
+		Player: kingshot.Player{PlayerID: "player-1"},
+		CodeResults: []kingshot.RegistrationResult{
 			{Code: "CODE1", Message: "Redeemed successfully."},
 		},
 	})
 
 	if embed.Title != "Player Registered" {
 		t.Errorf("Title = %q, want Player Registered", embed.Title)
+	}
+	if embed.Author == nil {
+		t.Fatalf("Author is nil, want support URL %q", supportURL)
+	}
+	if embed.Author.URL != supportURL {
+		t.Errorf("Author.URL = %q, want %q", embed.Author.URL, supportURL)
 	}
 	if len(embed.Fields) != 2 {
 		t.Fatalf("field count = %d, want 2", len(embed.Fields))
@@ -315,11 +232,13 @@ func TestRedemptionEmbedsBatchesPlayers(t *testing.T) {
 	if len(embeds[0].Fields) != maxEmbedFields || len(embeds[1].Fields) != 1 {
 		t.Errorf("field counts = %d, %d; want %d, 1", len(embeds[0].Fields), len(embeds[1].Fields), maxEmbedFields)
 	}
+	for index, embed := range embeds {
+		if embed.Author == nil {
+			t.Errorf("embed %d Author is nil, want support URL %q", index, supportURL)
+			continue
+		}
+		if embed.Author.URL != supportURL {
+			t.Errorf("embed %d Author.URL = %q, want %q", index, embed.Author.URL, supportURL)
+		}
+	}
 }
-
-// errSentinel is a non-nil error used in table-driven format tests.
-var errSentinel = &sentinelError{}
-
-type sentinelError struct{}
-
-func (e *sentinelError) Error() string { return "sentinel error" }

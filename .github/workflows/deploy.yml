@@ -1,4 +1,5 @@
-# This workflow builds a Go binary and deploys it to a Linux VM on push to main.
+# This workflow builds a Go binary and deploys it to the production Linux VM
+# when a version tag is pushed or when manually dispatched.
 #
 # !! REQUIRES GITHUB SECRETS !!
 # Before this works, you MUST add the following secrets to your repository
@@ -19,11 +20,11 @@
 #
 name: Build and Deploy Go App
 
-# Trigger the workflow on push events to the "main" branch
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -57,6 +58,8 @@ jobs:
     
     # This job depends on the "build" job finishing successfully
     needs: build
+    environment:
+      name: production
 
     steps:
       # Step 1: Download the binary artifact from the "build" job
@@ -80,15 +83,14 @@ jobs:
 
       - name: Copy binary to VM via scp
         run: |
-          scp -v ./kingshot ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/kingshot.tmp
+          scp -v ./kingshot "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/kingshot.tmp"
 
       - name: Restart application on VM
         run: |
-          ssh ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} '
+          ssh "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" '
           echo "Placing new binary..."
-          sudo rm -f ${{ secrets.VM_DEST_PATH }}/kingshot
-          sudo mv ~/kingshot.tmp ${{ secrets.VM_DEST_PATH }}/kingshot
-          sudo chmod +x ${{ secrets.VM_DEST_PATH }}/kingshot
+          sudo mv ~/kingshot.tmp "${{ secrets.VM_DEST_PATH }}"
+          sudo chmod +x "${{ secrets.VM_DEST_PATH }}"
           echo "Restarting service..."
           sudo systemctl restart kingshot.service
           echo "Deployment complete."

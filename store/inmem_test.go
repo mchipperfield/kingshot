@@ -43,11 +43,11 @@ func (s *recordingBearStore) SetBear(_ context.Context, guildID, bearID string, 
 	s.lastSetTime = setTime
 	s.lastSetBy = setBy
 	s.statuses[bearKey(guildID, bearID)] = kingshot.BearStatus{
-		Bear:    bearID,
-		GuildID: guildID,
-		SetAt:   time.Now(),
-		SetBy:   setBy,
-		Next:    setTime,
+		Bear:             bearID,
+		GuildID:          guildID,
+		SetAt:            time.Now(),
+		SetBy:            setBy,
+		Next:             setTime,
 		RemindersEnabled: true,
 	}
 	return nil
@@ -88,11 +88,11 @@ func bearKey(guildID, bearID string) string {
 
 func TestBearStoreGetBearStatusCachesBackingStoreResult(t *testing.T) {
 	status := kingshot.BearStatus{
-		Bear:    "1",
-		GuildID: "guild-1",
-		SetBy:   "user-1",
-		SetAt:   time.Now().Add(-time.Hour),
-		Next:    time.Now().Add(time.Hour),
+		Bear:             "1",
+		GuildID:          "guild-1",
+		SetBy:            "user-1",
+		SetAt:            time.Now().Add(-time.Hour),
+		Next:             time.Now().Add(time.Hour),
 		RemindersEnabled: true,
 	}
 	backingStore := newRecordingBearStore(status)
@@ -149,11 +149,11 @@ func TestBearStoreSetBearWritesThroughAndUpdatesCache(t *testing.T) {
 
 func TestBearStoreGetAllBearStatusesCachesBulkResult(t *testing.T) {
 	status := kingshot.BearStatus{
-		Bear:    "1",
-		GuildID: "guild-1",
-		SetBy:   "user-1",
-		SetAt:   time.Now().Add(-time.Hour),
-		Next:    time.Now().Add(time.Hour),
+		Bear:             "1",
+		GuildID:          "guild-1",
+		SetBy:            "user-1",
+		SetAt:            time.Now().Add(-time.Hour),
+		Next:             time.Now().Add(time.Hour),
 		RemindersEnabled: true,
 	}
 	backingStore := newRecordingBearStore(status)

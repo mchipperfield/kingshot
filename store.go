@@ -2,16 +2,15 @@ package kingshot
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
 // Player holds all the information for a given player
 type Player struct {
-	PlayerID  string `firestore:"playerID"`
-	UserID    string `firestore:"userID"`
-	KingdomID string `firestore:"kingdomID"`
-	GuildID   string `firestore:"guildID"`
+	PlayerID  string
+	UserID    string
+	KingdomID string
+	GuildID   string
 }
 
 // PlayerStore manages persistent storage of registered players.
@@ -19,9 +18,10 @@ type Player struct {
 type PlayerStore interface {
 	// Players returns all active registered players in storage order.
 	Players(ctx context.Context) ([]*Player, error)
-	// FindByPlayerID looks up the player by their playerID. found is false when
-	// the player is not registered, including if it has been unlinked.
-	FindByPlayerID(ctx context.Context, playerID string) (player *Player, found bool, err error)
+	// FindByPlayerID looks up the player by their playerID. It returns
+	// ErrNotFound when the player is not registered, including if it has been
+	// unlinked.
+	FindByPlayerID(ctx context.Context, playerID string) (player *Player, err error)
 	// FindByUser returns all players registered to a given user.
 	FindByUser(ctx context.Context, userID string) ([]*Player, error)
 	// AddPlayer stores a new player, or reactivates and re-links a previously
@@ -88,7 +88,3 @@ type BearStore interface {
 	UpdateBearNext(ctx context.Context, guildId, bearID string, next time.Time) error
 	GetAllBearStatuses(ctx context.Context) ([]BearStatus, error)
 }
-
-var (
-	ErrNotFound error = errors.New("not found")
-)

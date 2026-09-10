@@ -14,11 +14,12 @@ const discordMaxMessageLen = 1900
 
 const (
 	thumbnailURL   = "https://matthewchipperfield.dev/public/images/gopherize.png"
+	supportURL     = "https://buymeacoffee.com/goaferlx"
 	embedColor     = 11261619
 	maxEmbedFields = 25
 )
 
-func registrationEmbed(result kingshot.RegisterResult) *discordgo.MessageEmbed {
+func registrationEmbed(result *kingshot.RegisterResult) *discordgo.MessageEmbed {
 	embed := &discordgo.MessageEmbed{
 		Title:       "Player Registered",
 		Description: "Your player is ready for gift-code redemptions.",
@@ -28,6 +29,7 @@ func registrationEmbed(result kingshot.RegisterResult) *discordgo.MessageEmbed {
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    "Goaf's Herald",
 			IconURL: thumbnailURL,
+			URL:     supportURL,
 		},
 		Fields: []*discordgo.MessageEmbedField{
 			{Name: "Player ID", Value: fmt.Sprintf("`%s`", result.PlayerID), Inline: true},
@@ -55,6 +57,7 @@ func redemptionEmbeds(code string, results []kingshot.PlayerRedeemResult) []*dis
 			Author: &discordgo.MessageEmbedAuthor{
 				Name:    "Goaf's Herald",
 				IconURL: thumbnailURL,
+				URL:     supportURL,
 			},
 		}
 		for _, result := range results[start:end] {
@@ -69,22 +72,9 @@ func redemptionEmbeds(code string, results []kingshot.PlayerRedeemResult) []*dis
 	return embeds
 }
 
-// formatCodeResult formats a CodeResult as a Discord-ready message string.
-func formatCodeResult(r kingshot.CodeResult) string {
-	switch {
-	case r.StoreError != nil:
-		return fmt.Sprintf("Code `%s` has not been added, as we failed to open player file.", r.Code)
-	case r.APIError != nil:
-		return fmt.Sprintf("Failed to validate code `%s` due to an error. The code has not been added.", r.Code)
-	case r.AlreadyActive:
-		return fmt.Sprintf("Code `%s` is already active.", r.Code)
-	case r.AlreadyExpired:
-		return fmt.Sprintf("Code `%s` has expired and cannot be re-added.", r.Code)
-	case r.Invalid:
-		return fmt.Sprintf("Code `%s` is not valid and was not added.", r.Code)
-	case r.InvalidPlayer:
-		return fmt.Sprintf("Code `%s` could not be validated as the player is invalid.", r.Code)
-	case r.Added && len(r.PlayerResults) == 0:
+// formatCodeResult formats a successful redemption response for Discord.
+func formatCodeResult(r *kingshot.RedeemResult) string {
+	if len(r.PlayerResults) == 0 {
 		return fmt.Sprintf("There are no registered players, but code `%s` has been added to the active list.", r.Code)
 	}
 
@@ -109,72 +99,6 @@ func formatRedemptionReport(code string, playerCount int, results []string) stri
 		"Code `%s` has been added to the active list.\n\n**Redemption Results for %d players:**\n%s",
 		code, playerCount, strings.Join(results, "\n"),
 	)
-}
-
-// formatRegisterResult formats a RegisterResult as a Discord-ready message string.
-func formatRegisterResult(r kingshot.RegisterResult) string {
-	switch {
-	case r.APIError != nil:
-		return "Error validating player ID. Please try again later."
-	case r.InvalidPlayer:
-		return "Invalid player ID provided."
-	case r.StoreError != nil:
-		return "Error registering player ID."
-	case r.AlreadySelf:
-		return "This player ID is already registered to your Discord account."
-	case r.AlreadyOther:
-		return "This player ID is already registered to another Discord account."
-	case r.MaxPlayersForKingdomReached:
-		return "You have already registered the maximum number of players for this kingdom."
-	}
-
-	response := fmt.Sprintf(
-		"**Registration Successful!**\n**Your player ID *%s* has been registered successfully!**",
-		r.PlayerID,
-	)
-	if len(r.CodeResults) > 0 {
-		lines := make([]string, 0, len(r.CodeResults))
-		for _, cr := range r.CodeResults {
-			lines = append(lines, fmt.Sprintf("`%s`: %s", cr.Code, cr.Message))
-		}
-		response += "\n\n**Gift Code Redemption Results:**\n" + strings.Join(lines, "\n")
-	}
-	return response
-}
-
-func formatTransferResult(r kingshot.TransferPlayerResult) string {
-	switch {
-	case r.StoreError != nil:
-		return "Error transferring player. Please try again later."
-	case r.NotYourPlayer:
-		return "This player is not registered to your Discord account."
-	case r.AlreadyInKingdom:
-		return "This player is already in that kingdom."
-	case r.MaxPlayersForNewKingdomReached:
-		return "You have already registered the maximum number of players for the new kingdom."
-	case r.PlayerNotFound:
-		if r.RegistrationResult != nil {
-			return "Player not found. We tried to register it for you instead:\n\n" + formatRegisterResult(*r.RegistrationResult)
-		}
-		return "Player not found." // Should not happen if registration was attempted
-	case r.Success:
-		return fmt.Sprintf("Player `%s` has been successfully transferred to kingdom `%s`.", r.PlayerID, r.NewKingdomID)
-	}
-	return "An unknown error occurred during transfer."
-}
-
-func formatUnlinkResult(r kingshot.UnlinkPlayerResult) string {
-	switch {
-	case r.StoreError != nil:
-		return "Error unlinking player. Please try again later."
-	case r.PlayerNotFound:
-		return "Player not found."
-	case r.NotYourPlayer:
-		return "This player is not registered to your Discord account."
-	case r.Success:
-		return fmt.Sprintf("Player `%s` has been unlinked from your Discord account.", r.PlayerID)
-	}
-	return "An unknown error occurred while unlinking."
 }
 
 // chunkMessage splits s into slices of at most maxLen characters, breaking on
@@ -221,5 +145,41 @@ func respondFinal(s *discordgo.Session, i *discordgo.InteractionCreate, msg stri
 	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg, Components: &components})
 	if err != nil {
 		slog.Error("failed to edit interaction response", "error", err)
+	}
+}
+
+func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *discordgo.MessageEmbed {
+	next := fmt.Sprintf("<t:%d:F>", status.Next.UTC().Unix())
+
+	return &discordgo.MessageEmbed{
+		Title:       fmt.Sprintf("Bear Trap %s", status.Bear),
+		Description: description,
+		//Timestamp:   time.Now().Format(time.RFC3339),
+		Color: 11261619,
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Set by %s on %s", setBy, status.SetAt.UTC().Format("02 Jan 2006 at 15:04 UTC")),
+		},
+		Thumbnail: &discordgo.MessageEmbedThumbnail{
+			URL: thumbnailURL,
+		},
+		Author: &discordgo.MessageEmbedAuthor{
+			Name:    "Goaf's Herald",
+			IconURL: thumbnailURL,
+			URL:     thumbnailURL,
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:  "Reminders",
+				Value: status.Reminders(),
+			},
+			{
+				Name:  "Next Bear At:",
+				Value: next,
+			},
+			{
+				Name:  "That's:",
+				Value: fmt.Sprintf("<t:%d:R>", status.Next.Unix()),
+			},
+		},
 	}
 }

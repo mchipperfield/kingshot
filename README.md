@@ -204,6 +204,28 @@ Deploy the privacy API to App Engine from the repository root:
 gcloud app deploy app.yaml
 ```
 
+## Release and deployment
+
+Pull requests targeting `main` run the build and race-enabled test suite. Merging
+to `main` does not deploy the production bot. To make a production release:
+
+1. Update `CHANGELOG.md`, moving the relevant entries from `Unreleased` into a
+	dated version section.
+2. Merge that change to `main`.
+3. Create and push a version tag from the release commit, for example:
+
+	```bash
+	git tag v0.2.2
+	git push origin v0.2.2
+	```
+
+4. The tag workflow builds and deploys the bot to the production VM. The
+	workflow uses the GitHub `production` environment, where deployment
+	approval rules can be configured.
+
+The App Engine privacy API is deployed separately with `gcloud app deploy
+app.yaml`.
+
 ## Test
 
 ```bash

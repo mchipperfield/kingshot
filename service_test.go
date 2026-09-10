@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -44,14 +45,17 @@ func (m *mapStore) Players(ctx context.Context) ([]*Player, error) {
 	return players, nil
 }
 
-func (m *mapStore) FindByPlayerID(ctx context.Context, playerID string) (*Player, bool, error) {
+func (m *mapStore) FindByPlayerID(ctx context.Context, playerID string) (*Player, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.unlinked[playerID] {
-		return nil, false, nil
+		return nil, ErrNotFound
 	}
-	p, found := m.players[playerID]
-	return p, found, nil
+	p, ok := m.players[playerID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return p, nil
 }
 
 func (m *mapStore) FindByUser(ctx context.Context, userID string) ([]*Player, error) {
@@ -109,8 +113,8 @@ func (m *mapStore) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) er
 type errStore struct{ err error }
 
 func (e *errStore) Players(context.Context) ([]*Player, error) { return nil, e.err }
-func (e *errStore) FindByPlayerID(context.Context, string) (*Player, bool, error) {
-	return nil, false, e.err
+func (e *errStore) FindByPlayerID(context.Context, string) (*Player, error) {
+	return nil, e.err
 }
 func (e *errStore) FindByUser(context.Context, string) ([]*Player, error) { return nil, e.err }
 func (e *errStore) AddPlayer(context.Context, NewPlayerRequest) error     { return e.err }
@@ -153,7 +157,7 @@ func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/gift_code":
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(redeemErrCode)})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: redeemErrCode})
 		default:
 			http.NotFound(w, r)
 		}
@@ -161,58 +165,25 @@ func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 	t.Cleanup(srv.Close)
 	return &GiftCodeService{
 		codeStore: newInMemoryCodeStore(),
-		redeemURL: srv.URL + "/gift_code",
-		client:    srv.Client(),
+		client:    &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code", logger: nil},
 		store:     newMapStore(nil),
+		logger:    slog.Default(),
 	}
 }
 
 // --- API type tests ----------------------------------------------------------
 
-// TestErrCodeUnmarshalJSON verifies that ErrCode correctly deserialises both
-// string and numeric JSON values.
-func TestErrCodeUnmarshalJSON(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  ErrCode
-	}{
-		{"string value", `"20000"`, ErrCode("20000")},
-		{"numeric value", `20000`, ErrCode("20000")},
-		{"error string", `"40008"`, ErrCode("40008")},
-		{"error numeric", `40008`, ErrCode("40008")},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var got ErrCode
-			if err := json.Unmarshal([]byte(tt.input), &got); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
-
-	t.Run("invalid value", func(t *testing.T) {
-		var got ErrCode
-		err := json.Unmarshal([]byte(`true`), &got)
-		if err == nil {
-			t.Fatal("expected error for boolean input, got nil")
-		}
-	})
-}
-
-// TestEncodePayload verifies that EncodePayload produces a deterministic
+// TestClientEncodePayload verifies that Client.encodePayload produces a deterministic
 // JSON payload that contains a "sign" field and that the signature is correct.
-func TestEncodePayload(t *testing.T) {
+func TestClientEncodePayload(t *testing.T) {
+	client := &Client{signingKey: Key}
+
 	t.Run("adds sign field", func(t *testing.T) {
 		data := map[string]string{
 			"fid":  "12345",
 			"time": "1700000000",
 		}
-		payload, err := EncodePayload(data)
+		payload, err := client.encodePayload(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -234,11 +205,11 @@ func TestEncodePayload(t *testing.T) {
 		data1 := map[string]string{"fid": "abc", "time": "999"}
 		data2 := map[string]string{"fid": "abc", "time": "999"}
 
-		p1, err := EncodePayload(data1)
+		p1, err := client.encodePayload(data1)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		p2, err := EncodePayload(data2)
+		p2, err := client.encodePayload(data2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -256,8 +227,8 @@ func TestEncodePayload(t *testing.T) {
 		d1 := map[string]string{"fid": "player1", "time": "1000"}
 		d2 := map[string]string{"fid": "player2", "time": "1000"}
 
-		p1, _ := EncodePayload(d1)
-		p2, _ := EncodePayload(d2)
+		p1, _ := client.encodePayload(d1)
+		p2, _ := client.encodePayload(d2)
 
 		var r1, r2 map[string]string
 		json.Unmarshal([]byte(p1), &r1)
@@ -281,7 +252,7 @@ func TestEncodePayload(t *testing.T) {
 		dataToHash := values.Encode() + Key
 
 		dataCopy := map[string]string{"fid": "testplayer", "time": "1700000000"}
-		payload, err := EncodePayload(dataCopy)
+		payload, err := client.encodePayload(dataCopy)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -302,51 +273,46 @@ func TestEncodePayload(t *testing.T) {
 // TestRedeemResponseDecoding mirrors TestLoginResponseDecoding for RedeemResponse.
 func TestRedeemResponseDecoding(t *testing.T) {
 	raw := fmt.Sprintf(`{"code": 0, "msg": "success", "err_code": "%s"}`, ErrCodeSuccess)
-	var resp RedeemResponse
+	var resp redeemResponse
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.ErrCode != ErrCode(ErrCodeSuccess) {
+	if resp.ErrCode != ErrCodeSuccess {
 		t.Errorf("ErrCode = %q, want %q", resp.ErrCode, ErrCodeSuccess)
 	}
 }
 
 // --- Service logic tests -----------------------------------------------------
 
-// TestInterpretRedeemResult verifies that every known ErrCode maps to the
-// correct outcome flags and message.
+// TestInterpretRedeemResult verifies that every API failure maps to the
+// expected caller-safe CodeError.
 func TestInterpretRedeemResult(t *testing.T) {
 	tests := []struct {
-		errCode     ErrCode
-		wantMsg     string
-		wantExpired bool
-		wantInvalid bool
-		wantLogin   bool
+		errCode  string
+		wantMsg  string
+		wantKind codeErrorKind
 	}{
-		{ErrCodeSuccess, "Successfully redeemed!", false, false, false},
-		{ErrCodeClaimed, "Already claimed.", false, false, false},
-		{ErrCodeExpired, "Code expired or not found.", true, false, false},
-		{ErrCodeNotFound, "Code is not valid.", false, true, false},
-		{ErrCodeLogin, "Unable to login.", false, false, true},
-		{ErrCodeLimitReached, "Redemption Limit Reached", false, false, false},
-		{"99999", "Failed to redeem code.", false, false, false},
+		{ErrCodeClaimed, "Code already claimed.", codeErrorClaimed},
+		{ErrCodeExpired, "This code has expired.", codeErrorExpired},
+		{ErrCodeNotFound, "This code is invalid.", codeErrorInvalid},
+		{ErrCodeLogin, "The player used to validate this code is invalid.", codeErrorLogin},
+		{ErrCodeUnknownPlayer, "This player's details are invalid.", codeErrorLogin},
+		{ErrCodeLimitReached, "Redemption limit reached.", codeErrorLimitReached},
+		{"99999", "Failed to redeem code.", codeErrorUnknown},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.errCode), func(t *testing.T) {
-			got := interpretRedeemResult(tt.errCode)
-			if got.msg != tt.wantMsg {
-				t.Errorf("msg = %q, want %q", got.msg, tt.wantMsg)
+			got := interpretRedeemResult(&redeemResponse{ErrCode: tt.errCode})
+			if got.Error() != tt.wantMsg {
+				t.Errorf("Error() = %q, want %q", got.Error(), tt.wantMsg)
 			}
-			if got.codeExpired != tt.wantExpired {
-				t.Errorf("codeExpired = %v, want %v", got.codeExpired, tt.wantExpired)
-			}
-			if got.codeInvalid != tt.wantInvalid {
-				t.Errorf("codeInvalid = %v, want %v", got.codeInvalid, tt.wantInvalid)
-			}
-			if got.loginFailed != tt.wantLogin {
-				t.Errorf("loginFailed = %v, want %v", got.loginFailed, tt.wantLogin)
+			if got.kind != tt.wantKind {
+				t.Errorf("kind = %v, want %v", got.kind, tt.wantKind)
 			}
 		})
+	}
+	if got := interpretRedeemResult(&redeemResponse{ErrCode: ErrCodeSuccess}); got != nil {
+		t.Errorf("success returned error %v", got)
 	}
 }
 
@@ -354,28 +320,31 @@ func TestInterpretRedeemResult(t *testing.T) {
 // no network calls.
 func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 	t.Run("already active", func(t *testing.T) {
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore("EXISTINGCODE"), store: newMapStore(nil)}
-		result := svc.ProcessNewCode(t.Context(), "EXISTINGCODE")
-		if !result.AlreadyActive {
-			t.Errorf("expected AlreadyActive=true, got %+v", result)
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore("EXISTINGCODE"), store: newMapStore(nil), logger: slog.Default()}
+		result, err := svc.ProcessNewCode(t.Context(), "EXISTINGCODE")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
 		}
 	})
 
 	t.Run("already expired", func(t *testing.T) {
 		cs := newInMemoryCodeStore()
 		cs.Add(t.Context(), Code{Value: "EXPIREDCODE", ExpiredAt: time.Now()})
-		svc := &GiftCodeService{codeStore: cs, store: newMapStore(nil)}
-		result := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
-		if !result.AlreadyExpired {
-			t.Errorf("expected AlreadyExpired=true, got %+v", result)
+		svc := &GiftCodeService{codeStore: cs, store: newMapStore(nil), logger: slog.Default()}
+		result, err := svc.ProcessNewCode(t.Context(), "EXPIREDCODE")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
 		}
 	})
 
 	t.Run("store error", func(t *testing.T) {
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("store error")}}
-		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
+		storeErr := errors.New("store error")
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{storeErr}, logger: slog.Default()}
+		result, err := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result != nil || !errors.Is(err, storeErr) {
+			t.Fatalf("got result=%+v err=%v, want store error", result, err)
 		}
 	})
 
@@ -383,10 +352,11 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		svc := &GiftCodeService{
 			codeStore: &testCodeStore{findErr: errors.New("code lookup failed")},
 			store:     newMapStore(nil),
+			logger:    slog.Default(),
 		}
-		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
+		result, err := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result != nil || err == nil {
+			t.Fatalf("got result=%+v err=%v, want lookup error", result, err)
 		}
 	})
 
@@ -394,19 +364,20 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		svc := &GiftCodeService{
 			codeStore: &testCodeStore{addErr: errors.New("code add failed")},
 			store:     newMapStore(nil),
+			logger:    slog.Default(),
 		}
-		result := svc.ProcessNewCode(t.Context(), "NEWCODE")
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
-		}
-		if result.Added {
-			t.Error("expected failed code add not to report success")
+		result, err := svc.ProcessNewCode(t.Context(), "NEWCODE")
+		if result != nil || err == nil {
+			t.Fatalf("got result=%+v err=%v, want add error", result, err)
 		}
 	})
 
 	t.Run("no registered players adds code to active list", func(t *testing.T) {
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: newMapStore(nil)}
-		result := svc.ProcessNewCode(t.Context(), "FRESHCODE")
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: newMapStore(nil), logger: slog.Default()}
+		result, err := svc.ProcessNewCode(t.Context(), "FRESHCODE")
+		if err != nil {
+			t.Fatalf("ProcessNewCode() error = %v", err)
+		}
 		if !result.Added {
 			t.Errorf("expected Added=true, got %+v", result)
 		}
@@ -418,17 +389,114 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 			t.Error("expected FRESHCODE to be in active codes")
 		}
 	})
+
+	t.Run("invalid API response returns CodeError", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeNotFound)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "INVALID")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		}
+		if codeErr.Error() != "This code is invalid." {
+			t.Fatalf("CodeError.Error() = %q", codeErr.Error())
+		}
+		code, found, _ := svc.codeStore.Find(t.Context(), "INVALID")
+		if !found || !code.IsExpired() {
+			t.Fatal("expected invalid code to be stored as inactive")
+		}
+	})
+
+	t.Run("limit reached API response stores inactive code", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeLimitReached)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "LIMITED")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		}
+		code, found, _ := svc.codeStore.Find(t.Context(), "LIMITED")
+		if !found || !code.IsExpired() {
+			t.Fatal("expected limit-reached code to be stored as inactive")
+		}
+	})
+
+	t.Run("claimed API response stores inactive code", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeClaimed)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "CLAIMED")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		}
+		code, found, _ := svc.codeStore.Find(t.Context(), "CLAIMED")
+		if !found || !code.IsExpired() {
+			t.Fatal("expected claimed code to be stored as inactive")
+		}
+	})
+
+	t.Run("unknown API response returns operational error", func(t *testing.T) {
+		svc := mockKingShotAPI(t, "99999")
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "UNKNOWN")
+		var codeErr *CodeError
+		if result != nil || err == nil || errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want non-CodeError", result, err)
+		}
+	})
+
+	t.Run("successful API response returns redemption result", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeSuccess)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1", GuildID: "g1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "VALID")
+		if err != nil {
+			t.Fatalf("ProcessNewCode() error = %v", err)
+		}
+		if result == nil || !result.Added || len(result.PlayerResults) != 1 {
+			t.Fatalf("ProcessNewCode() result = %+v", result)
+		}
+		if result.PlayerResults[0].Message != "Successfully redeemed!" {
+			t.Fatalf("player result = %+v", result.PlayerResults[0])
+		}
+	})
 }
 
+var ErrRemoveActiveCodeFailed = errors.New("remove active code failed")
+var ErrCodeLookupFailed = errors.New("active code lookup failed")
+
+type StoreError struct {
+	err error
+}
+
+func (s *StoreError) Error() string {
+	return s.err.Error()
+}
 func TestGiftCodeService_RegisterPlayerCodeStoreErrors(t *testing.T) {
 	t.Run("active code lookup error", func(t *testing.T) {
 		svc := &GiftCodeService{
-			codeStore: &testCodeStore{activeErr: errors.New("active code lookup failed")},
+			codeStore: &testCodeStore{activeErr: &StoreError{err: ErrCodeLookupFailed}},
 			store:     newMapStore(nil),
+			logger:    slog.Default(),
 		}
-		result := svc.RegisterPlayer(t.Context(), NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"})
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
+		_, err := svc.RegisterPlayer(t.Context(), NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"})
+		var storeErr *StoreError
+		if !errors.As(err, &storeErr) {
+			t.Errorf("expected StoreError, got %v", err)
 		}
 	})
 
@@ -436,19 +504,39 @@ func TestGiftCodeService_RegisterPlayerCodeStoreErrors(t *testing.T) {
 		svc := mockKingShotAPI(t, ErrCodeExpired)
 		svc.codeStore = &testCodeStore{
 			active:    []string{"EXPIRED"},
-			removeErr: errors.New("remove active code failed"),
+			removeErr: &StoreError{err: ErrRemoveActiveCodeFailed},
 		}
-		result := svc.RegisterPlayer(t.Context(), NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"})
-		if result.StoreError == nil {
-			t.Error("expected StoreError to be set")
+		_, err := svc.RegisterPlayer(t.Context(), NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"})
+		var storeErr *StoreError
+		if !errors.As(err, &storeErr) {
+			t.Errorf("expected StoreError, got %v", err)
 		}
 	})
+}
+
+func TestGiftCodeService_RegisterPlayerRemovesLimitReachedCodes(t *testing.T) {
+	svc := mockKingShotAPI(t, ErrCodeLimitReached)
+	svc.codeStore = newInMemoryCodeStore("LIMITED")
+
+	_, err := svc.RegisterPlayer(t.Context(), NewPlayerRequest{
+		PlayerID:  "p1",
+		UserID:    "u1",
+		KingdomID: "k1",
+	})
+	if err != nil {
+		t.Fatalf("RegisterPlayer() error = %v", err)
+	}
+	if active, err := svc.codeStore.ActiveCodes(t.Context()); err != nil {
+		t.Fatalf("ActiveCodes() error = %v", err)
+	} else if len(active) != 0 {
+		t.Fatalf("ActiveCodes() = %v, want no active codes", active)
+	}
 }
 
 func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+		json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -457,15 +545,15 @@ func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
 		store: newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 		}),
-		redeemURL: srv.URL + "/gift_code",
-		client:    srv.Client(),
+		client: &Client{redeemURL: srv.URL + "/gift_code", Client: srv.Client(), logger: slog.Default()}, // 1 request per second
+		logger: slog.Default(),
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	result := svc.ProcessNewCode(ctx, "CODE")
-	if result.APIError == nil || !errors.Is(result.APIError, context.Canceled) {
-		t.Fatalf("expected caller cancellation, got %+v", result)
+	result, err := svc.ProcessNewCode(ctx, "CODE")
+	if result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("got result=%+v err=%v, want context cancellation", result, err)
 	}
 }
 
@@ -473,35 +561,37 @@ func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {
 func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 	t.Run("new player", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &Client{Client: httptest.NewServer(nil).Client(), redeemURL: "http://example.com/gift_code"}, logger: slog.Default()}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1", KingdomID: "k1"}
-		result := svc.RegisterPlayer(t.Context(), req)
-		if !result.Success {
-			t.Fatalf("expected success, got %+v", result)
+		_, err := svc.RegisterPlayer(t.Context(), req)
+		if err != nil {
+			t.Fatalf("expected nil error, got %+v", err)
 		}
-		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" {
+		if p, err := store.FindByPlayerID(t.Context(), "p1"); err != nil || p.UserID != "u1" {
 			t.Errorf("player not added to store correctly")
 		}
 	})
 
 	t.Run("player already registered to self", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u1"}})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.RegisterPlayer(t.Context(), req)
-		if !result.AlreadySelf {
-			t.Errorf("expected AlreadySelf=true, got %+v", result)
+		_, err := svc.RegisterPlayer(t.Context(), req)
+		if !errors.Is(err, ErrAlreadySelf) {
+			t.Errorf("expected AlreadySelf error, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player ID is already registered to your Discord account.")
 	})
 
 	t.Run("player already registered to other", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{"p1": {PlayerID: "p1", UserID: "u2"}})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := NewPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.RegisterPlayer(t.Context(), req)
-		if !result.AlreadyOther {
-			t.Errorf("expected AlreadyOther=true, got %+v", result)
+		_, err := svc.RegisterPlayer(t.Context(), req)
+		if !errors.Is(err, ErrAlreadyOther) {
+			t.Errorf("expected AlreadyOther error, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player ID is already registered to another Discord account.")
 	})
 
 	t.Run("max players for kingdom reached", func(t *testing.T) {
@@ -509,13 +599,25 @@ func TestGiftCodeService_RegisterPlayer(t *testing.T) {
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := NewPlayerRequest{PlayerID: "p3", UserID: "u1", KingdomID: "k1"}
-		result := svc.RegisterPlayer(t.Context(), req)
-		if !result.MaxPlayersForKingdomReached {
-			t.Errorf("expected MaxPlayersForKingdomReached=true, got %+v", result)
+		_, err := svc.RegisterPlayer(t.Context(), req)
+		if !errors.Is(err, ErrMaxPlayersForKingdom) {
+			t.Errorf("expected MaxPlayersForKingdom error, got %+v", err)
 		}
+		assertPlayerError(t, err, "You have already registered the maximum number of players for this kingdom.")
 	})
+}
+
+func assertPlayerError(t *testing.T, err error, wantMessage string) {
+	t.Helper()
+	var playerErr *PlayerError
+	if !errors.As(err, &playerErr) {
+		t.Fatalf("expected PlayerError, got %T: %v", err, err)
+	}
+	if playerErr.Error() != wantMessage {
+		t.Fatalf("PlayerError.Error() = %q, want %q", playerErr.Error(), wantMessage)
+	}
 }
 
 func TestGiftCodeService_TransferPlayer(t *testing.T) {
@@ -523,65 +625,56 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "g1"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2", GuildID: "g2"}
-		result := svc.TransferPlayer(t.Context(), req)
-		if !result.Success {
-			t.Fatalf("expected success, got %+v", result)
+		player, _ := svc.TransferPlayer(t.Context(), req)
+		if player == nil {
+			t.Fatalf("expected player, got %+v", nil)
 		}
-		if p, _, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" || p.GuildID != "g2" {
+		if p, _ := store.FindByPlayerID(t.Context(), "p1"); p.KingdomID != "k2" || p.GuildID != "g2" {
 			t.Errorf("player transfer not fully updated, got kingdom=%s guild=%s", p.KingdomID, p.GuildID)
 		}
 	})
 
-	t.Run("player not found, registers new player", func(t *testing.T) {
+	t.Run("player not found is rejected", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil, logger: slog.Default()}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
-		result := svc.TransferPlayer(t.Context(), req)
-		if !result.PlayerNotFound {
-			t.Fatalf("expected player not found, got %+v", result)
+		_, err := svc.TransferPlayer(t.Context(), req)
+		if !errors.Is(err, ErrPlayerNotRegistered) {
+			t.Fatalf("expected ErrPlayerNotRegistered, got %+v", err)
 		}
-		if result.RegistrationResult == nil {
-			t.Fatal("expected registration result, got nil")
-		}
-		if !result.RegistrationResult.Success {
-			t.Errorf("expected registration to be successful, got %+v", result.RegistrationResult)
-		}
-		if p, found, _ := store.FindByPlayerID(t.Context(), "p1"); !found || p.UserID != "u1" || p.GuildID != "g1" {
-			t.Errorf("player not added to store correctly")
+		assertPlayerError(t, err, "This player is not registered. Use /player register to register it first.")
+
+		if _, err := store.FindByPlayerID(t.Context(), "p1"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("player should not have been added to the store")
 		}
 	})
 
-	t.Run("blank owner also registers new player", func(t *testing.T) {
+	t.Run("blank owner is rejected", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0", GuildID: "g0"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil, logger: slog.Default()}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
-		result := svc.TransferPlayer(t.Context(), req)
-		if !result.PlayerNotFound {
-			t.Fatalf("expected PlayerNotFound=true, got %+v", result)
+		_, err := svc.TransferPlayer(t.Context(), req)
+		if !errors.Is(err, ErrPlayerNotRegistered) {
+			t.Fatalf("expected ErrPlayerNotRegistered, got %+v", err)
 		}
-		if result.RegistrationResult == nil || !result.RegistrationResult.Success {
-			t.Fatalf("expected successful registration, got %+v", result.RegistrationResult)
-		}
-		p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-		if !found || p.UserID != "u1" || p.KingdomID != "k1" || p.GuildID != "g1" {
-			t.Errorf("player not re-registered correctly: found=%v player=%+v", found, p)
-		}
+		assertPlayerError(t, err, "This player is not registered. Use /player register to register it first.")
 	})
 
 	t.Run("not your player", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
-		result := svc.TransferPlayer(t.Context(), req)
-		if !result.NotYourPlayer {
-			t.Errorf("expected NotYourPlayer=true, got %+v", result)
+		_, err := svc.TransferPlayer(t.Context(), req)
+		if err != nil && !errors.Is(err, NotYourPlayer) {
+			t.Fatalf("expected NotYourPlayer error, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player is not registered to your Discord account.")
 	})
 
 	t.Run("max players for new kingdom reached", func(t *testing.T) {
@@ -590,12 +683,13 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k2"},
 			"p3": {PlayerID: "p3", UserID: "u1", KingdomID: "k2"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k2"}
-		result := svc.TransferPlayer(t.Context(), req)
-		if !result.MaxPlayersForNewKingdomReached {
-			t.Errorf("expected MaxPlayersForNewKingdomReached=true, got %+v", result)
+		_, err_ := svc.TransferPlayer(t.Context(), req)
+		if !errors.Is(err_, ErrMaxPlayersForKingdom) {
+			t.Errorf("expected MaxPlayersForNewKingdomReached error, got %+v", err_)
 		}
+		assertPlayerError(t, err_, "You have already registered the maximum number of players for the new kingdom.")
 	})
 
 	t.Run("transfer to current kingdom is rejected", func(t *testing.T) {
@@ -603,12 +697,13 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 			"p2": {PlayerID: "p2", UserID: "u1", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1"}
-		result := svc.TransferPlayer(t.Context(), req)
-		if !result.AlreadyInKingdom {
-			t.Fatalf("expected AlreadyInKingdom=true, got %+v", result)
+		_, err := svc.TransferPlayer(t.Context(), req)
+		if !errors.Is(err, ErrAlreadyInKingdom) {
+			t.Fatalf("expected ErrAlreadyInKingdom, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player is already in that kingdom.")
 	})
 }
 
@@ -617,58 +712,59 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.Success {
-			t.Fatalf("expected success, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if err != nil {
+			t.Fatalf("expected nil error, got %+v", err)
 		}
-		_, found, _ := store.FindByPlayerID(t.Context(), "p1")
-		if found {
+		_, err = store.FindByPlayerID(t.Context(), "p1")
+		if !errors.Is(err, ErrNotFound) {
 			t.Fatal("expected unlinked player to no longer be found")
 		}
 	})
 
 	t.Run("player not found", func(t *testing.T) {
 		store := newMapStore(nil)
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.PlayerNotFound {
-			t.Errorf("expected PlayerNotFound=true, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %+v", err)
 		}
 	})
 
 	t.Run("not your player", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", UserID: "u2", KingdomID: "k1"},
+			"p1": {PlayerID: "p1", UserID: "u2"},
 		})
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.NotYourPlayer {
-			t.Errorf("expected NotYourPlayer=true, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if !errors.Is(err, NotYourPlayer) {
+			t.Errorf("expected NotYourPlayer, got %+v", err)
 		}
+		assertPlayerError(t, err, "This player is not registered to your Discord account.")
 	})
 
 	t.Run("already unlinked reports player not found", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1"},
+			"p1": {PlayerID: "p1", UserID: "u1"},
 		})
 		store.unlinked["p1"] = true
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store}
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, logger: slog.Default()}
 		req := UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"}
-		result := svc.UnlinkPlayer(t.Context(), req)
-		if !result.PlayerNotFound {
-			t.Errorf("expected PlayerNotFound=true, got %+v", result)
+		err := svc.UnlinkPlayer(t.Context(), req)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %+v", err)
 		}
 	})
 
 	t.Run("store error on lookup", func(t *testing.T) {
-		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("boom")}}
-		result := svc.UnlinkPlayer(t.Context(), UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"})
-		if result.StoreError == nil {
-			t.Errorf("expected StoreError, got %+v", result)
+		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("boom")}, logger: slog.Default()}
+		err := svc.UnlinkPlayer(t.Context(), UnlinkPlayerRequest{PlayerID: "p1", UserID: "u1"})
+		if err == nil {
+			t.Errorf("expected error, got %+v", err)
 		}
 	})
 }
@@ -678,17 +774,17 @@ func TestGiftCodeService_UnlinkPlayer(t *testing.T) {
 // returning AlreadyOther/AlreadySelf, allowing accounts to change hands.
 func TestGiftCodeService_RegisterPlayer_reactivatesUnlinked(t *testing.T) {
 	store := newMapStore(map[string]*Player{
-		"p1": {PlayerID: "p1", UserID: "u1", KingdomID: "k1", GuildID: "old-guild"},
+		"p1": {PlayerID: "p1", UserID: ""},
 	})
 	store.unlinked["p1"] = true
-	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil, logger: slog.Default()}
 	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
-	result := svc.RegisterPlayer(t.Context(), req)
-	if !result.Success {
-		t.Fatalf("expected success, got %+v", result)
+	_, err := svc.RegisterPlayer(t.Context(), req)
+	if err != nil {
+		t.Fatalf("expected success, got error %+v", err)
 	}
-	p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-	if !found {
+	p, err := store.FindByPlayerID(t.Context(), "p1")
+	if err != nil {
 		t.Fatal("expected player to exist in store")
 	}
 	if p.UserID != "u2" {
@@ -703,14 +799,14 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 	store := newMapStore(map[string]*Player{
 		"p1": {PlayerID: "p1", UserID: "", KingdomID: "k1", GuildID: "old-guild"},
 	})
-	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: &http.Client{}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil, logger: slog.Default()}
 	req := NewPlayerRequest{PlayerID: "p1", UserID: "u2", KingdomID: "k2", GuildID: "new-guild"}
-	result := svc.RegisterPlayer(t.Context(), req)
-	if !result.Success {
-		t.Fatalf("expected success, got %+v", result)
+	_, err := svc.RegisterPlayer(t.Context(), req)
+	if err != nil {
+		t.Fatalf("expected success, got error %+v", err)
 	}
-	p, found, _ := store.FindByPlayerID(t.Context(), "p1")
-	if !found {
+	p, err := store.FindByPlayerID(t.Context(), "p1")
+	if err != nil {
 		t.Fatal("expected player to exist in store")
 	}
 	if p.UserID != "u2" || p.KingdomID != "k2" || p.GuildID != "new-guild" {
@@ -721,7 +817,7 @@ func TestGiftCodeService_RegisterPlayer_blankOwnerIsUnowned(t *testing.T) {
 // TestGiftCodeService_concurrentAccess runs concurrent ProcessNewCode calls so
 // the race detector can catch any unsynchronised access to the shared slices.
 func TestGiftCodeService_concurrentAccess(t *testing.T) {
-	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("no store")}}
+	svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: &errStore{errors.New("no store")}, logger: slog.Default()}
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Add(1)
@@ -770,21 +866,20 @@ func TestGiftCodeService_codeStoreLookup(t *testing.T) {
 // TestGiftCodeService_redeemForPlayer tests the redeem → interpret
 // pipeline for a single player using a mock HTTP server.
 func TestGiftCodeService_redeemForPlayer(t *testing.T) {
-	tests := []struct {
-		name          string
+	tests := map[string]struct {
 		redeemErrCode string
 		wantMsg       string
 	}{
-		{"success", ErrCodeSuccess, "Successfully redeemed!"},
-		{"already claimed", ErrCodeClaimed, "Already claimed."},
-		{"login error from api", ErrCodeLogin, "Unable to login."},
-		{"unknown error code", "99999", "Failed to redeem code."},
+		"success":              {ErrCodeSuccess, "Successfully redeemed!"},
+		"already claimed":      {ErrCodeClaimed, "Code already claimed."},
+		"login error from api": {ErrCodeLogin, "The player used to validate this code is invalid."},
+		"unknown error code":   {"99999", "Failed to redeem code."},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			svc := mockKingShotAPI(t, tt.redeemErrCode)
 			player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
-			got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
+			got := redemptionMessage(svc.redeemForPlayer(t.Context(), player, "TESTCODE"))
 			if got != tt.wantMsg {
 				t.Errorf("got %q, want %q", got, tt.wantMsg)
 			}
@@ -800,14 +895,14 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		t.Cleanup(srv.Close)
 		svc := &GiftCodeService{
 			codeStore: newInMemoryCodeStore(),
-			redeemURL: srv.URL + "/gift_code",
-			client:    srv.Client(),
+			client:    &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"},
 			store:     newMapStore(nil),
+			logger:    slog.Default(),
 		}
 		player := &Player{PlayerID: "player1", KingdomID: "k1", UserID: "discord1"}
 		got := svc.redeemForPlayer(t.Context(), player, "TESTCODE")
-		if got != "Error redeeming code." {
-			t.Errorf("got %q, want %q", got, "Error redeeming code.")
+		if redemptionMessage(got) != "Failed to redeem code." {
+			t.Errorf("got %q, want %q", redemptionMessage(got), "Failed to redeem code.")
 		}
 	})
 
@@ -815,17 +910,17 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		var requests atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if requests.Add(1) < 3 {
-				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+				json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeTimeoutRetry})
 				return
 			}
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}, logger: slog.Default()}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Successfully redeemed!" {
-			t.Fatalf("got %q, want successful redemption", got)
+		if redemptionMessage(got) != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != 3 {
 			t.Fatalf("got %d requests, want 3", gotRequests)
@@ -836,14 +931,14 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		var requests atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requests.Add(1)
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeTimeoutRetry})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}, logger: slog.Default()}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Failed to redeem code." {
-			t.Fatalf("got %q, want exhausted retry result", got)
+		if redemptionMessage(got) != "Failed to redeem code." {
+			t.Fatalf("got %q, want exhausted retry result", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != maxRedeemAttempts {
 			t.Fatalf("got %d requests, want %d", gotRequests, maxRedeemAttempts)
@@ -857,14 +952,14 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 				w.Write([]byte("temporarily unavailable"))
 				return
 			}
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}, logger: slog.Default()}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Successfully redeemed!" {
-			t.Fatalf("got %q, want successful redemption", got)
+		if redemptionMessage(got) != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != 2 {
 			t.Fatalf("got %d requests, want 2", gotRequests)
@@ -876,17 +971,17 @@ func TestGiftCodeService_redeemForPlayer(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if requests.Add(1) == 1 {
 				w.WriteHeader(http.StatusTooManyRequests)
-				json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCode(ErrCodeTimeoutRetry)})
+				json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeTimeoutRetry})
 				return
 			}
-			json.NewEncoder(w).Encode(RedeemResponse{ErrCode: ErrCodeSuccess})
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
 		}))
 		t.Cleanup(srv.Close)
 
-		svc := &GiftCodeService{redeemURL: srv.URL, client: srv.Client()}
+		svc := &GiftCodeService{client: &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code"}, logger: slog.Default()}
 		got := svc.redeemForPlayer(t.Context(), &Player{PlayerID: "player1", KingdomID: "k1"}, "TESTCODE")
-		if got != "Successfully redeemed!" {
-			t.Fatalf("got %q, want successful redemption", got)
+		if redemptionMessage(got) != "Successfully redeemed!" {
+			t.Fatalf("got %q, want successful redemption", redemptionMessage(got))
 		}
 		if gotRequests := requests.Load(); gotRequests != 2 {
 			t.Fatalf("got %d requests, want 2", gotRequests)

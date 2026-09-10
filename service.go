@@ -2,12 +2,11 @@ package kingshot
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
-	"net/http"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 // GiftCodeService manages gift code state and interacts with the KingShot API.
@@ -16,95 +15,114 @@ type GiftCodeService struct {
 	mu        sync.Mutex
 	codeStore CodeStore
 	store     PlayerStore
-	client    *http.Client
-	redeemURL string
+	client    *Client
+	logger    *slog.Logger
 }
 
 // NewService returns a GiftCodeService using the supplied PlayerStore
 // and CodeStore implementations, such as the Firestore-backed stores.
-func NewService(store PlayerStore, cs CodeStore) *GiftCodeService {
+// A nil logger falls back to slog.Default(). The logger is tagged with a
+// "component" attribute so its log lines can be attributed to this service.
+func NewService(store PlayerStore, cs CodeStore, logger *slog.Logger) *GiftCodeService {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "code_service")
 	return &GiftCodeService{
 		store:     store,
 		codeStore: cs,
-		redeemURL: defaultRedeemURL,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &transport{
-				limiter: rate.NewLimiter(rate.Every(2*time.Second), 1),
-			},
-		},
+		client:    NewClient(logger),
+		logger:    logger,
 	}
+}
+
+// RedeemResult describes a successfully processed gift code.
+type RedeemResult struct {
+	Code          string
+	Added         bool
+	PlayerResults []PlayerRedeemResult
+}
+
+// PlayerRedeemResult is the redemption outcome for a single player.
+type PlayerRedeemResult struct {
+	GuildID  string
+	PlayerID string
+	Message  string
 }
 
 // ProcessNewCode validates code against the KingShot API and redeems it for
 // all registered players. It is safe to call concurrently. ctx bounds all
 // store and HTTP calls made while processing code.
-func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) CodeResult {
+func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*RedeemResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if c, found, err := s.codeStore.Find(ctx, code); err != nil {
-		return CodeResult{Code: code, StoreError: err}
+		return nil, fmt.Errorf("code service: find code %s: %w", code, err)
 	} else if found {
 		if !c.IsExpired() {
-			return CodeResult{Code: code, AlreadyActive: true}
+			return nil, newCodeError("This code is already active.", codeErrorActive, nil)
 		}
-		return CodeResult{Code: code, AlreadyExpired: true}
+		return nil, newCodeError("This code has expired and cannot be re-added.", codeErrorExpired, nil)
 	}
 
 	players, err := s.store.Players(ctx)
 	if err != nil {
-		return CodeResult{Code: code, StoreError: err}
+		return nil, fmt.Errorf("code service: fetch players: %w", err)
 	}
 
 	if len(players) == 0 {
 		if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
-			return CodeResult{Code: code, StoreError: err}
+			return nil, fmt.Errorf("code service: add code %s: %w", code, err)
 		}
-		slog.Info("code added with no registered players", "code", code)
-		return CodeResult{Code: code, Added: true}
+		s.logger.Info("code added with no registered players", "code", code)
+		return &RedeemResult{Code: code, Added: true}, nil
 	}
 
 	firstPlayer := players[0]
-	redeemResp, err := s.redeemGiftCode(ctx, firstPlayer.PlayerID, firstPlayer.KingdomID, code)
+	redeemResp, err := s.client.redeemGiftCode(ctx, firstPlayer.PlayerID, firstPlayer.KingdomID, code)
 	if err != nil {
-		slog.Error("failed to validate new code", "error", err, "code", code)
-		return CodeResult{Code: code, APIError: err}
+		return nil, fmt.Errorf("code service: validate code %s: %w", code, err)
 	}
 
-	slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
+	s.logger.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
 
-	outcome := interpretRedeemResult(redeemResp.ErrCode)
-	if outcome.codeExpired {
+	outcome := interpretRedeemResult(redeemResp)
+	if outcome != nil && (outcome.kind == codeErrorClaimed || outcome.kind == codeErrorExpired || outcome.kind == codeErrorInvalid || outcome.kind == codeErrorLimitReached) {
 		if err := s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()}); err != nil {
-			return CodeResult{Code: code, StoreError: err}
+			return nil, fmt.Errorf("code service: record inactive code %s: %w", code, err)
 		}
-		return CodeResult{Code: code, AlreadyExpired: true}
+		return nil, outcome
 	}
-	if outcome.codeInvalid {
-		return CodeResult{Code: code, Invalid: true}
-	}
-	if outcome.loginFailed {
+	if outcome != nil && (outcome.kind == codeErrorInvalid || outcome.kind == codeErrorLogin) {
 		// This error code is now repurposed to mean the player is invalid
-		return CodeResult{Code: code, InvalidPlayer: true}
+		return nil, outcome
+	}
+	if outcome != nil && outcome.kind == codeErrorUnknown {
+		return nil, fmt.Errorf("code service: unexpected redemption response: %w", redeemResp)
 	}
 
 	if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
-		return CodeResult{Code: code, StoreError: err}
+		return nil, fmt.Errorf("code service: add code %s: %w", code, err)
 	}
-	slog.Info("code added", "code", code)
+	s.logger.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
-	results = append(results, PlayerRedeemResult{GuildID: firstPlayer.GuildID, PlayerID: firstPlayer.PlayerID, Message: outcome.msg})
+	firstPlayerMessage := "Successfully redeemed!"
+	if outcome != nil {
+		firstPlayerMessage = outcome.Error()
+	}
+	results = append(results, PlayerRedeemResult{GuildID: firstPlayer.GuildID, PlayerID: firstPlayer.PlayerID, Message: firstPlayerMessage})
 	for _, player := range players[1:] {
+		result := s.redeemForPlayer(ctx, player, code)
 		results = append(results, PlayerRedeemResult{
 			GuildID:  player.GuildID,
 			PlayerID: player.PlayerID,
-			Message:  s.redeemForPlayer(ctx, player, code),
+			Message:  redemptionMessage(result),
 		})
 	}
 
-	return CodeResult{Code: code, Added: true, PlayerResults: results}
+	return &RedeemResult{Code: code, Added: true, PlayerResults: results}, nil
 }
 
 // NewPlayerRequest is the set of parameters for registering a new player.
@@ -116,25 +134,24 @@ type NewPlayerRequest struct {
 // UserID in the store, and redeems any currently active codes for the
 // new player. It is safe to call concurrently. ctx bounds all store and HTTP
 // calls made while registering req.
-func (s *GiftCodeService) RegisterPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
+func (s *GiftCodeService) RegisterPlayer(ctx context.Context, req NewPlayerRequest) (*RegisterResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.registerPlayer(ctx, req)
 }
 
-func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
-	existing, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
-	if err != nil {
-		slog.Error("failed to look up player for registration", "error", err)
-		return RegisterResult{StoreError: err}
+func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerRequest) (*RegisterResult, error) {
+	player, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	// Treat a blank owner as unowned so a previously unlinked player can be
 	// reclaimed even if the lookup surfaces the document.
-	if found && existing.UserID != "" {
-		if existing.UserID == req.UserID {
-			return RegisterResult{AlreadySelf: true}
+	if player != nil && player.UserID != "" {
+		if player.UserID == req.UserID {
+			return nil, newPlayerError("This player ID is already registered to your Discord account.", ErrAlreadySelf)
 		}
-		return RegisterResult{AlreadyOther: true}
+		return nil, newPlayerError("This player ID is already registered to another Discord account.", ErrAlreadyOther)
 	}
 
 	return s.addNewPlayer(ctx, req)
@@ -143,11 +160,10 @@ func (s *GiftCodeService) registerPlayer(ctx context.Context, req NewPlayerReque
 // addNewPlayer stores req in the store and redeems active codes for the new player.
 // Callers must have already verified that the player does not exist.
 // Caller must hold s.mu.
-func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest) RegisterResult {
+func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest) (*RegisterResult, error) {
 	userPlayers, err := s.store.FindByUser(ctx, req.UserID)
 	if err != nil {
-		slog.Error("failed to look up players by user for registration", "error", err)
-		return RegisterResult{StoreError: err}
+		return nil, err
 	}
 
 	kingdomPlayerCount := 0
@@ -158,12 +174,12 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 	}
 
 	if kingdomPlayerCount >= 2 {
-		return RegisterResult{MaxPlayersForKingdomReached: true}
+		return nil, newPlayerError("You have already registered the maximum number of players for this kingdom.", ErrMaxPlayersForKingdom)
 	}
 
 	if err := s.store.AddPlayer(ctx, req); err != nil {
-		slog.Error("failed to add player", "error", err)
-		return RegisterResult{StoreError: err}
+		s.logger.Error("failed to add player", "error", err)
+		return nil, err
 	}
 
 	player := &Player{
@@ -173,68 +189,67 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 		GuildID:   req.GuildID,
 	}
 
-	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
+	s.logger.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
 
-	codeResults, err := s.redeemActiveCodes(ctx, player)
+	redeemResults, err := s.redeemActiveCodes(ctx, player)
 	if err != nil {
-		return RegisterResult{
-			PlayerID:    req.PlayerID,
-			UserID:      req.UserID,
-			StoreError:  err,
-			CodeResults: codeResults,
-		}
+		return nil, err
 	}
-	return RegisterResult{
-		PlayerID:    req.PlayerID,
-		UserID:      req.UserID,
-		Success:     true,
-		CodeResults: codeResults,
-	}
+	return &RegisterResult{
+		Player:      *player,
+		CodeResults: redeemResults,
+	}, nil
 }
 
-// TransferPlayer transfers req.PlayerID to req.NewKingdomID, or registers the
-// player if not already known. ctx bounds all store and HTTP calls made while
-// processing req.
-func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayerRequest) TransferPlayerResult {
+// RegisterResult is the structured outcome of a RegisterPlayer call.
+type RegisterResult struct {
+	Player
+	CodeResults []RegistrationResult
+}
+
+// RegistrationResult is the redemption outcome for a single active code during registration.
+type RegistrationResult struct {
+	Code    string
+	Message string
+}
+
+// TransferPlayerRequest is the input to the TransferPlayer service method.
+type TransferPlayerRequest struct {
+	PlayerID     string
+	NewKingdomID string
+	UserID       string
+	GuildID      string
+}
+
+// TransferPlayer transfers req.PlayerID to req.NewKingdomID. ctx bounds all
+// store calls made while processing req.
+func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayerRequest) (*Player, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	player, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
-	if err != nil {
-		slog.Error("failed to look up player for transfer", "error", err)
-		return TransferPlayerResult{StoreError: err}
+	player, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 
-	// Treat a blank owner as unowned so a previously unlinked player can be
-	// reclaimed even if the lookup surfaces the document.
-	if !found || player.UserID == "" {
-		// Player doesn't exist, so let's register them instead.
-		registerReq := NewPlayerRequest{
-			PlayerID:  req.PlayerID,
-			KingdomID: req.NewKingdomID,
-			UserID:    req.UserID,
-			GuildID:   req.GuildID,
-		}
-		regResult := s.addNewPlayer(ctx, registerReq)
-		return TransferPlayerResult{
-			PlayerNotFound:     true,
-			RegistrationResult: &regResult,
-		}
+	// Treat a blank owner as unowned so an unregistered or previously
+	// unlinked player is rejected rather than silently reclaimed.
+	if errors.Is(err, ErrNotFound) || player.UserID == "" {
+		return nil, newPlayerError("This player is not registered. Use /player register to register it first.", ErrPlayerNotRegistered)
 	}
 
 	if player.UserID != req.UserID {
-		return TransferPlayerResult{NotYourPlayer: true}
+		return nil, newPlayerError("This player is not registered to your Discord account.", NotYourPlayer)
 	}
 
 	if player.KingdomID == req.NewKingdomID {
-		return TransferPlayerResult{AlreadyInKingdom: true}
+		return nil, newPlayerError("This player is already in that kingdom.", ErrAlreadyInKingdom)
 	}
 
 	// Check if the new kingdom has space
 	userPlayers, err := s.store.FindByUser(ctx, req.UserID)
 	if err != nil {
-		slog.Error("failed to look up players by user for transfer", "error", err)
-		return TransferPlayerResult{StoreError: err}
+		return nil, fmt.Errorf("find players by user %s: %w", req.UserID, err)
 	}
 
 	kingdomPlayerCount := 0
@@ -246,51 +261,49 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 	}
 
 	if kingdomPlayerCount >= 2 {
-		return TransferPlayerResult{MaxPlayersForNewKingdomReached: true}
+		return nil, newPlayerError("You have already registered the maximum number of players for the new kingdom.", ErrMaxPlayersForKingdom)
 	}
 
 	if err := s.store.UpdatePlayerKingdom(ctx, req); err != nil {
-		slog.Error("failed to update player kingdom", "error", err)
-		return TransferPlayerResult{StoreError: err}
+		return nil, fmt.Errorf("update player kingdom: %w", err)
 	}
 
-	return TransferPlayerResult{
-		PlayerID:     req.PlayerID,
-		NewKingdomID: req.NewKingdomID,
-		UserID:       req.UserID,
-		Success:      true,
-	}
+	return &Player{
+		PlayerID:  req.PlayerID,
+		KingdomID: req.NewKingdomID,
+		UserID:    req.UserID,
+		GuildID:   req.GuildID,
+	}, nil
+}
+
+// UnlinkPlayerRequest is the input to the UnlinkPlayer service method.
+type UnlinkPlayerRequest struct {
+	PlayerID string
+	UserID   string
+	GuildID  string
 }
 
 // UnlinkPlayer removes req.UserID's ownership of req.PlayerID and marks it
 // inactive so it is no longer redeemed for new codes. ctx bounds all store
 // calls made while processing req.
-func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) UnlinkPlayerResult {
+func (s *GiftCodeService) UnlinkPlayer(ctx context.Context, req UnlinkPlayerRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	existing, found, err := s.store.FindByPlayerID(ctx, req.PlayerID)
+	existing, err := s.store.FindByPlayerID(ctx, req.PlayerID)
 	if err != nil {
-		slog.Error("failed to look up player for unlink", "error", err)
-		return UnlinkPlayerResult{StoreError: err}
+		return fmt.Errorf("find player by id %s: %w", req.PlayerID, err)
 	}
-	// found is false both when the player was never registered and when it
-	// has already been unlinked, so both cases report the same result.
-	if !found {
-		return UnlinkPlayerResult{PlayerNotFound: true}
-	}
+
 	if existing.UserID != req.UserID {
-		return UnlinkPlayerResult{NotYourPlayer: true}
+		return newPlayerError("This player is not registered to your Discord account.", NotYourPlayer)
 	}
 
 	if err := s.store.UnlinkPlayer(ctx, req); err != nil {
-		slog.Error("failed to unlink player", "error", err)
-		return UnlinkPlayerResult{StoreError: err}
+		return fmt.Errorf("unlink player %s: %w", req.PlayerID, err)
 	}
 
-	slog.Info("player unlinked", "player_id", req.PlayerID, "user_id", req.UserID)
-
-	return UnlinkPlayerResult{PlayerID: req.PlayerID, Success: true}
+	return nil
 }
 
 func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) ([]*Player, error) {
@@ -299,50 +312,88 @@ func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) (
 	return s.store.FindByUser(ctx, userID)
 }
 
-// redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.
-func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, code string) string {
-	resp, err := s.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
-	if err != nil {
-		slog.Error("failed to redeem", "error", err, "player_id", player.PlayerID, "code", code)
-		return "Error redeeming code."
+// interpretRedeemResult maps a KingShot API response to a caller-safe error.
+func interpretRedeemResult(resp *redeemResponse) *CodeError {
+	if resp.ErrCode == ErrCodeSuccess {
+		return nil
 	}
-	slog.Info("redeem response", "player_id", player.PlayerID, "code", code, "err_code", resp.ErrCode, "message", resp.Message)
-	return interpretRedeemResult(resp.ErrCode).msg
+	switch resp.ErrCode {
+	case ErrCodeClaimed:
+		return newCodeError("Code already claimed.", codeErrorClaimed, resp)
+	case ErrCodeExpired:
+		return newCodeError("This code has expired.", codeErrorExpired, resp)
+	case ErrCodeNotFound:
+		return newCodeError("This code is invalid.", codeErrorInvalid, resp)
+	case ErrCodeLogin:
+		return newCodeError("The player used to validate this code is invalid.", codeErrorLogin, resp)
+	case ErrCodeUnknownPlayer:
+		return newCodeError("This player's details are invalid.", codeErrorLogin, resp)
+	case ErrCodeLimitReached:
+		return newCodeError("Redemption limit reached.", codeErrorLimitReached, resp)
+	default:
+		return newCodeError("Failed to redeem code.", codeErrorUnknown, resp)
+	}
+}
+
+// redeemForPlayer logs playerID in, redeems code, and returns a human-readable result.
+func (s *GiftCodeService) redeemForPlayer(ctx context.Context, player *Player, code string) error {
+	resp, err := s.client.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
+	if err != nil {
+		return fmt.Errorf("code service: redeem code %s for player %s: %w", code, player.PlayerID, err)
+	}
+	codeErr := interpretRedeemResult(resp)
+	if codeErr == nil {
+		return nil
+	}
+	return codeErr
+}
+
+func redemptionMessage(err error) string {
+	if err == nil {
+		return "Successfully redeemed!"
+	}
+	var codeErr *CodeError
+	if errors.As(err, &codeErr) {
+		return codeErr.Error()
+	}
+	return "Failed to redeem code."
 }
 
 // redeemActiveCodes redeems all currently active codes for playerID and returns
 // a slice of per-code results. Caller must hold s.mu.
-func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) ([]ActiveCodeResult, error) {
+func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player) ([]RegistrationResult, error) {
 	active, err := s.codeStore.ActiveCodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("code service: fetch active codes: %w", err)
 	}
 	if len(active) == 0 {
 		return nil, nil
 	}
 
-	var results []ActiveCodeResult
+	var results []RegistrationResult
 	var codesToRemove []string
 
 	for _, code := range active {
-		redeemResp, err := s.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
+		redeemResp, err := s.client.redeemGiftCode(ctx, player.PlayerID, player.KingdomID, code)
 		if err != nil {
-			slog.Error("failed to redeem gift code after registration", "error", err, "code", code, "player_id", player.PlayerID)
-			results = append(results, ActiveCodeResult{Code: code, Message: "Error redeeming code."})
+			results = append(results, RegistrationResult{Code: code, Message: "Error redeeming code."})
 			continue
 		}
-		slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", player.PlayerID)
 
-		outcome := interpretRedeemResult(redeemResp.ErrCode)
-		if outcome.codeExpired || outcome.codeInvalid {
-			codesToRemove = append(codesToRemove, code)
+		result := interpretRedeemResult(redeemResp)
+		if result != nil {
+			if result.kind == codeErrorClaimed || result.kind == codeErrorExpired || result.kind == codeErrorInvalid || result.kind == codeErrorLimitReached {
+				codesToRemove = append(codesToRemove, code)
+			}
+			results = append(results, RegistrationResult{Code: code, Message: result.Error()})
+		} else {
+			results = append(results, RegistrationResult{Code: code, Message: "Successfully redeemed."})
 		}
-		results = append(results, ActiveCodeResult{Code: code, Message: outcome.msg})
 	}
 
 	if len(codesToRemove) > 0 {
 		if err := s.codeStore.RemoveActive(ctx, codesToRemove...); err != nil {
-			return results, err
+			return results, fmt.Errorf("code service: remove active codes: %w", err)
 		}
 	}
 

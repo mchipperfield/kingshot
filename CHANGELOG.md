@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Extended the player registration timeout to allow for the KingShot API rate limiter when redeeming active gift codes.
+- Marked claimed, expired, invalid, and redemption-limit-reached gift codes inactive so they are not retried for later players.
+
+### Changed
+
+- Moved the Buy Me a Coffee link from embed footers to embed authors so it renders as a clickable link in Discord.
+
+## [0.2.1] - 2026-08-30
+
+### Added
+
+- Added a Buy Me a Coffee footer to the bear reminder, player registration, and gift-code redemption embeds.
+
 ## [0.2.0] - 2026-08-16
 
 ### Added

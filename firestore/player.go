@@ -2,6 +2,7 @@ package firestore
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -66,24 +67,24 @@ func (ps *PlayerStore) Players(ctx context.Context) ([]*kingshot.Player, error) 
 	return players, nil
 }
 
-func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*kingshot.Player, bool, error) {
+func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*kingshot.Player, error) {
 	docRef := ps.Client.Collection("players").Doc(playerID)
 	docSnap, err := docRef.Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return nil, false, nil
+			return nil, kingshot.ErrNotFound
 		}
-		return nil, false, err
+		return nil, fmt.Errorf("firestore: get player document %s: %w", playerID, err)
 	}
 
 	var p player
 	if err := docSnap.DataTo(&p); err != nil {
-		return nil, false, err
+		return nil, fmt.Errorf("firestore: decode player document %s: %w", playerID, err)
 	}
 	// Get is by document ID, so it can't apply a Where filter; treat an
 	// unlinked player the same as one that was never registered.
 	if !p.IsActive {
-		return nil, false, nil
+		return nil, kingshot.ErrNotFound
 	}
 
 	return &kingshot.Player{
@@ -91,7 +92,7 @@ func (ps *PlayerStore) FindByPlayerID(ctx context.Context, playerID string) (*ki
 		UserID:    p.UserID,
 		KingdomID: p.KingdomID,
 		GuildID:   p.GuildID,
-	}, true, nil
+	}, nil
 }
 
 func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingshot.Player, error) {
@@ -110,7 +111,7 @@ func (ps *PlayerStore) FindByUser(ctx context.Context, userID string) ([]*kingsh
 		}
 		var p player
 		if err := doc.DataTo(&p); err != nil {
-			slog.Error("failed to decode player document", "error", err, "doc_id", doc.Ref.ID)
+			slog.Error("firestore: decode player document", "error", err, "doc_id", doc.Ref.ID)
 			return nil, err
 		}
 		players = append(players, &kingshot.Player{
@@ -180,5 +181,5 @@ func (ps *PlayerStore) UnlinkPlayer(ctx context.Context, req kingshot.UnlinkPlay
 		{Path: "is_active", Value: false},
 		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})
-	return err
+	return fmt.Errorf("firestore: update player document %s: %w", req.PlayerID, err)
 }

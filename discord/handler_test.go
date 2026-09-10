@@ -202,6 +202,12 @@ func TestRegistrationEmbed(t *testing.T) {
 	if embed.Title != "Player Registered" {
 		t.Errorf("Title = %q, want Player Registered", embed.Title)
 	}
+	if embed.Author == nil {
+		t.Fatalf("Author is nil, want support URL %q", supportURL)
+	}
+	if embed.Author.URL != supportURL {
+		t.Errorf("Author.URL = %q, want %q", embed.Author.URL, supportURL)
+	}
 	if len(embed.Fields) != 2 {
 		t.Fatalf("field count = %d, want 2", len(embed.Fields))
 	}
@@ -225,5 +231,14 @@ func TestRedemptionEmbedsBatchesPlayers(t *testing.T) {
 	}
 	if len(embeds[0].Fields) != maxEmbedFields || len(embeds[1].Fields) != 1 {
 		t.Errorf("field counts = %d, %d; want %d, 1", len(embeds[0].Fields), len(embeds[1].Fields), maxEmbedFields)
+	}
+	for index, embed := range embeds {
+		if embed.Author == nil {
+			t.Errorf("embed %d Author is nil, want support URL %q", index, supportURL)
+			continue
+		}
+		if embed.Author.URL != supportURL {
+			t.Errorf("embed %d Author.URL = %q, want %q", index, embed.Author.URL, supportURL)
+		}
 	}
 }

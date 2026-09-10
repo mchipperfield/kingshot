@@ -181,6 +181,7 @@ func (h *BearHandler) ProcessBearReminders(ctx context.Context, s *discordgo.Ses
 				Author: &discordgo.MessageEmbedAuthor{
 					Name:    "Goaf's Herald",
 					IconURL: thumbnailURL,
+					URL:     supportURL,
 				},
 				Fields: []*discordgo.MessageEmbedField{
 					//{Name: "Starts at", Value: fmt.Sprintf("<t:%d:F>", r.Next.Unix())},

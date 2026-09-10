@@ -14,6 +14,7 @@ const discordMaxMessageLen = 1900
 
 const (
 	thumbnailURL   = "https://matthewchipperfield.dev/public/images/gopherize.png"
+	supportURL     = "https://buymeacoffee.com/goaferlx"
 	embedColor     = 11261619
 	maxEmbedFields = 25
 )
@@ -27,6 +28,7 @@ func registrationEmbed(result *kingshot.RegisterResult) *discordgo.MessageEmbed 
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    "Goaf's Herald",
 			IconURL: thumbnailURL,
+			URL:     supportURL,
 		},
 		Fields: []*discordgo.MessageEmbedField{
 			{Name: "Player ID", Value: fmt.Sprintf("`%s`", result.PlayerID), Inline: true},
@@ -53,6 +55,7 @@ func redemptionEmbeds(code string, results []kingshot.PlayerRedeemResult) []*dis
 			Author: &discordgo.MessageEmbedAuthor{
 				Name:    "Goaf's Herald",
 				IconURL: thumbnailURL,
+				URL:     supportURL,
 			},
 		}
 		for _, result := range results[start:end] {
@@ -160,6 +163,7 @@ func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *di
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    "Goaf's Herald",
 			IconURL: thumbnailURL,
+			URL:     thumbnailURL,
 		},
 		Fields: []*discordgo.MessageEmbedField{
 			{

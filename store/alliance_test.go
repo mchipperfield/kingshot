@@ -1,26 +1,28 @@
-package kingshot
+package inmem
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/mchipperfield/kingshot"
 )
 
-func TestInMemoryAllianceStoreKeepsChannelsPerGuild(t *testing.T) {
+func TestAllianceStoreKeepsChannelsPerGuild(t *testing.T) {
 	store := NewAllianceStore()
 	ctx := context.Background()
 
-	for _, request := range []*SetChannelRequest{
+	for _, request := range []*kingshot.SetChannelRequest{
 		{GuildId: "guild-1", ChannelId: "channel-1"},
 		{GuildId: "guild-2", ChannelId: "channel-2"},
 	} {
-		if err := store.SetChannel(ctx, BearChannel, request); err != nil {
+		if err := store.SetChannel(ctx, kingshot.BearChannel, request); err != nil {
 			t.Fatalf("SetChannel() error = %v", err)
 		}
 	}
 
 	for guildID, want := range map[string]string{"guild-1": "channel-1", "guild-2": "channel-2"} {
-		channelID, err := store.GetChannel(ctx, BearChannel, guildID)
+		channelID, err := store.GetChannel(ctx, kingshot.BearChannel, guildID)
 		if err != nil {
 			t.Fatalf("GetChannel(%q) error = %v", guildID, err)
 		}
@@ -30,7 +32,7 @@ func TestInMemoryAllianceStoreKeepsChannelsPerGuild(t *testing.T) {
 	}
 }
 
-func TestInMemoryAllianceStoreKeepsAccessRolesPerGuild(t *testing.T) {
+func TestAllianceStoreKeepsAccessRolesPerGuild(t *testing.T) {
 	store := NewAllianceStore()
 	ctx := context.Background()
 
@@ -54,7 +56,7 @@ func TestInMemoryAllianceStoreKeepsAccessRolesPerGuild(t *testing.T) {
 	if err := store.ResetAccessRole(ctx, "guild-1", "user-3"); err != nil {
 		t.Fatalf("ResetAccessRole() error = %v", err)
 	}
-	if _, err := store.GetAccessRole(ctx, "guild-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetAccessRole(ctx, "guild-1"); !errors.Is(err, kingshot.ErrNotFound) {
 		t.Errorf("GetAccessRole() after reset error = %v, want ErrNotFound", err)
 	}
 }

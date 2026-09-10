@@ -272,14 +272,37 @@ func TestClientEncodePayload(t *testing.T) {
 
 // TestRedeemResponseDecoding mirrors TestLoginResponseDecoding for RedeemResponse.
 func TestRedeemResponseDecoding(t *testing.T) {
-	raw := fmt.Sprintf(`{"code": 0, "msg": "success", "err_code": "%s"}`, ErrCodeSuccess)
-	var resp redeemResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	for name, raw := range map[string]string{
+		"string": fmt.Sprintf(`{"code": 0, "msg": "success", "err_code": "%s"}`, ErrCodeSuccess),
+		"number": `{"code": 0, "msg": "success", "err_code": 20000}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var resp redeemResponse
+			if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.ErrCode != ErrCodeSuccess {
+				t.Errorf("ErrCode = %q, want %q", resp.ErrCode, ErrCodeSuccess)
+			}
+		})
 	}
-	if resp.ErrCode != ErrCodeSuccess {
-		t.Errorf("ErrCode = %q, want %q", resp.ErrCode, ErrCodeSuccess)
-	}
+
+	t.Run("preserves quoted code", func(t *testing.T) {
+		var resp redeemResponse
+		if err := json.Unmarshal([]byte(`{"err_code":"0042"}`), &resp); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.ErrCode != "0042" {
+			t.Errorf("ErrCode = %q, want %q", resp.ErrCode, "0042")
+		}
+	})
+
+	t.Run("rejects boolean code", func(t *testing.T) {
+		var resp redeemResponse
+		if err := json.Unmarshal([]byte(`{"err_code":true}`), &resp); err == nil {
+			t.Fatal("expected boolean err_code to be rejected")
+		}
+	})
 }
 
 // --- Service logic tests -----------------------------------------------------

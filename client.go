@@ -42,6 +42,38 @@ type redeemResponse struct {
 	ErrCode string `json:"err_code"`
 }
 
+func (r *redeemResponse) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Message string          `json:"msg"`
+		ErrCode json.RawMessage `json:"err_code"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	r.Message = raw.Message
+	if len(raw.ErrCode) == 0 {
+		r.ErrCode = ""
+		return nil
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(string(raw.ErrCode)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("decode err_code: %w", err)
+	}
+	switch value := value.(type) {
+	case string:
+		r.ErrCode = value
+	case json.Number:
+		r.ErrCode = value.String()
+	default:
+		return fmt.Errorf("decode err_code: expected string or number, got %T", value)
+	}
+	return nil
+}
+
 func (r *redeemResponse) Error() string {
 	return fmt.Sprintf("redeemResponse: err_code=%s, msg=%s", r.ErrCode, r.Message)
 }

@@ -18,8 +18,9 @@ type Player struct {
 type PlayerStore interface {
 	// Players returns all active registered players in storage order.
 	Players(ctx context.Context) ([]*Player, error)
-	// FindByPlayerID looks up the player by their playerID. found is false when
-	// the player is not registered, including if it has been unlinked.
+	// FindByPlayerID looks up the player by their playerID. It returns
+	// ErrNotFound when the player is not registered, including if it has been
+	// unlinked.
 	FindByPlayerID(ctx context.Context, playerID string) (player *Player, err error)
 	// FindByUser returns all players registered to a given user.
 	FindByUser(ctx context.Context, userID string) ([]*Player, error)

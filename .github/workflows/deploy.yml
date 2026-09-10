@@ -88,10 +88,23 @@ jobs:
       - name: Restart application on VM
         run: |
           ssh "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" '
+          set -eu
+          destination="${{ secrets.VM_DEST_PATH }}"
+          if sudo test -d "$destination"; then
+            destination="$destination/kingshot"
+          fi
           echo "Placing new binary..."
-          sudo mv ~/kingshot.tmp "${{ secrets.VM_DEST_PATH }}"
-          sudo chmod +x "${{ secrets.VM_DEST_PATH }}"
+          sudo mv ~/kingshot.tmp "$destination"
+          sudo chmod +x "$destination"
           echo "Restarting service..."
           sudo systemctl restart kingshot.service
+          sudo systemctl is-active --quiet kingshot.service
+          service_executable="$(sudo systemctl show kingshot.service --property=ExecStart --value | sed -n "s/.*path=\([^ ;]*\).*/\1/p")"
+          if [ -n "$service_executable" ] && [ "$(sudo readlink -f "$service_executable")" != "$(sudo readlink -f "$destination")" ]; then
+            echo "kingshot.service is running a different executable: $service_executable" >&2
+            exit 1
+          fi
+          echo "Deployed executable: $destination"
+          sudo sha256sum "$destination"
           echo "Deployment complete."
           '

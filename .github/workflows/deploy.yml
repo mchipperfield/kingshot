@@ -91,7 +91,7 @@ jobs:
           set -eu
           destination="${{ secrets.VM_DEST_PATH }}"
           case "$destination" in
-            ~/*) destination="$HOME/${destination#~/}" ;;
+            "~/"*) destination="$HOME/${destination#\~/}" ;;
           esac
           if sudo test -d "$destination"; then
             destination="$destination/kingshot"

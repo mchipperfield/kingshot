@@ -90,9 +90,19 @@ jobs:
           ssh "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" '
           set -eu
           destination="${{ secrets.VM_DEST_PATH }}"
+          case "$destination" in
+            ~/*) destination="$HOME/${destination#~/}" ;;
+          esac
           if sudo test -d "$destination"; then
             destination="$destination/kingshot"
           fi
+          destination_directory="$(dirname "$destination")"
+          echo "Deployment destination: $destination"
+          echo "Deployment directory: $destination_directory"
+          sudo test -d "$destination_directory" || {
+            echo "Deployment directory does not exist: $destination_directory" >&2
+            exit 1
+          }
           echo "Placing new binary..."
           sudo mv ~/kingshot.tmp "$destination"
           sudo chmod +x "$destination"

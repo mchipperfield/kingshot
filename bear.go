@@ -2,7 +2,6 @@ package kingshot
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -47,11 +46,6 @@ func (s BearStatus) Reminders() string {
 	}
 	return "Disabled"
 }
-
-var (
-	ErrSetTimeInPast = errors.New("set time cannot be in the past")
-	ErrInvalidBear   = errors.New("invalid bear trap")
-)
 
 func (s *BearService) GetBearStatus(ctx context.Context, guildId, bearID string) (*BearStatus, error) {
 	return s.store.GetBearStatus(ctx, guildId, bearID)

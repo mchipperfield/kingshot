@@ -2,7 +2,6 @@ package kingshot
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
@@ -88,7 +87,3 @@ type BearStore interface {
 	UpdateBearNext(ctx context.Context, guildId, bearID string, next time.Time) error
 	GetAllBearStatuses(ctx context.Context) ([]BearStatus, error)
 }
-
-var (
-	ErrNotFound error = errors.New("not found")
-)

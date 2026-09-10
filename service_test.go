@@ -402,6 +402,44 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		if codeErr.Error() != "This code is invalid." {
 			t.Fatalf("CodeError.Error() = %q", codeErr.Error())
 		}
+		code, found, _ := svc.codeStore.Find(t.Context(), "INVALID")
+		if !found || !code.IsExpired() {
+			t.Fatal("expected invalid code to be stored as inactive")
+		}
+	})
+
+	t.Run("limit reached API response stores inactive code", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeLimitReached)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "LIMITED")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		}
+		code, found, _ := svc.codeStore.Find(t.Context(), "LIMITED")
+		if !found || !code.IsExpired() {
+			t.Fatal("expected limit-reached code to be stored as inactive")
+		}
+	})
+
+	t.Run("claimed API response stores inactive code", func(t *testing.T) {
+		svc := mockKingShotAPI(t, ErrCodeClaimed)
+		svc.store = newMapStore(map[string]*Player{
+			"p1": {PlayerID: "p1", KingdomID: "k1"},
+		})
+
+		result, err := svc.ProcessNewCode(t.Context(), "CLAIMED")
+		var codeErr *CodeError
+		if result != nil || !errors.As(err, &codeErr) {
+			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		}
+		code, found, _ := svc.codeStore.Find(t.Context(), "CLAIMED")
+		if !found || !code.IsExpired() {
+			t.Fatal("expected claimed code to be stored as inactive")
+		}
 	})
 
 	t.Run("unknown API response returns operational error", func(t *testing.T) {
@@ -472,6 +510,25 @@ func TestGiftCodeService_RegisterPlayerCodeStoreErrors(t *testing.T) {
 			t.Errorf("expected StoreError, got %v", err)
 		}
 	})
+}
+
+func TestGiftCodeService_RegisterPlayerRemovesLimitReachedCodes(t *testing.T) {
+	svc := mockKingShotAPI(t, ErrCodeLimitReached)
+	svc.codeStore = newInMemoryCodeStore("LIMITED")
+
+	_, err := svc.RegisterPlayer(t.Context(), NewPlayerRequest{
+		PlayerID:  "p1",
+		UserID:    "u1",
+		KingdomID: "k1",
+	})
+	if err != nil {
+		t.Fatalf("RegisterPlayer() error = %v", err)
+	}
+	if active, err := svc.codeStore.ActiveCodes(t.Context()); err != nil {
+		t.Fatalf("ActiveCodes() error = %v", err)
+	} else if len(active) != 0 {
+		t.Fatalf("ActiveCodes() = %v, want no active codes", active)
+	}
 }
 
 func TestGiftCodeService_ProcessNewCodeUsesCallerContext(t *testing.T) {

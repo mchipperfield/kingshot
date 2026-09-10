@@ -36,6 +36,20 @@ func NewService(store PlayerStore, cs CodeStore, logger *slog.Logger) *GiftCodeS
 	}
 }
 
+// RedeemResult describes a successfully processed gift code.
+type RedeemResult struct {
+	Code          string
+	Added         bool
+	PlayerResults []PlayerRedeemResult
+}
+
+// PlayerRedeemResult is the redemption outcome for a single player.
+type PlayerRedeemResult struct {
+	GuildID  string
+	PlayerID string
+	Message  string
+}
+
 // ProcessNewCode validates code against the KingShot API and redeems it for
 // all registered players. It is safe to call concurrently. ctx bounds all
 // store and HTTP calls made while processing code.
@@ -74,9 +88,9 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*Red
 	s.logger.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
 
 	outcome := interpretRedeemResult(redeemResp)
-	if outcome != nil && outcome.kind == codeErrorExpired {
+	if outcome != nil && (outcome.kind == codeErrorClaimed || outcome.kind == codeErrorExpired || outcome.kind == codeErrorInvalid || outcome.kind == codeErrorLimitReached) {
 		if err := s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()}); err != nil {
-			return nil, fmt.Errorf("code service: record expired code %s: %w", code, err)
+			return nil, fmt.Errorf("code service: record inactive code %s: %w", code, err)
 		}
 		return nil, outcome
 	}
@@ -114,30 +128,6 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*Red
 // NewPlayerRequest is the set of parameters for registering a new player.
 type NewPlayerRequest struct {
 	PlayerID, UserID, KingdomID, GuildID string
-}
-
-var (
-	ErrAlreadySelf  = errors.New("player already registered to this user")
-	ErrAlreadyOther = errors.New("player already registered to a different user")
-)
-
-// PlayerError is a caller-safe player registration or transfer failure.
-// Error may be shown directly to a user.
-type PlayerError struct {
-	message string
-	cause   error
-}
-
-func newPlayerError(message string, cause error) *PlayerError {
-	return &PlayerError{message: message, cause: cause}
-}
-
-func (e *PlayerError) Error() string {
-	return e.message
-}
-
-func (e *PlayerError) Unwrap() error {
-	return e.cause
 }
 
 // RegisterPlayer validates playerID via the KingShot API, registers it with
@@ -211,12 +201,17 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 	}, nil
 }
 
-var (
-	ErrAlreadyInKingdom     = errors.New("player already in kingdom")
-	ErrMaxPlayersForKingdom = errors.New("max players for kingdom reached")
-	NotYourPlayer           = errors.New("not your player")
-	ErrPlayerNotRegistered  = errors.New("player not registered")
-)
+// RegisterResult is the structured outcome of a RegisterPlayer call.
+type RegisterResult struct {
+	Player
+	CodeResults []RegistrationResult
+}
+
+// RegistrationResult is the redemption outcome for a single active code during registration.
+type RegistrationResult struct {
+	Code    string
+	Message string
+}
 
 // TransferPlayerRequest is the input to the TransferPlayer service method.
 type TransferPlayerRequest struct {
@@ -317,38 +312,6 @@ func (s *GiftCodeService) GetPlayersByUser(ctx context.Context, userID string) (
 	return s.store.FindByUser(ctx, userID)
 }
 
-type codeErrorKind uint8
-
-const (
-	codeErrorUnknown codeErrorKind = iota
-	codeErrorActive
-	codeErrorClaimed
-	codeErrorExpired
-	codeErrorInvalid
-	codeErrorLogin
-	codeErrorLimitReached
-)
-
-// CodeError is a caller-safe gift-code failure. Error may be shown directly
-// to a user.
-type CodeError struct {
-	message string
-	kind    codeErrorKind
-	cause   error
-}
-
-func newCodeError(message string, kind codeErrorKind, cause error) *CodeError {
-	return &CodeError{message: message, kind: kind, cause: cause}
-}
-
-func (e *CodeError) Error() string {
-	return e.message
-}
-
-func (e *CodeError) Unwrap() error {
-	return e.cause
-}
-
 // interpretRedeemResult maps a KingShot API response to a caller-safe error.
 func interpretRedeemResult(resp *redeemResponse) *CodeError {
 	if resp.ErrCode == ErrCodeSuccess {
@@ -419,7 +382,7 @@ func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player)
 
 		result := interpretRedeemResult(redeemResp)
 		if result != nil {
-			if result.kind == codeErrorExpired || result.kind == codeErrorInvalid {
+			if result.kind == codeErrorClaimed || result.kind == codeErrorExpired || result.kind == codeErrorInvalid || result.kind == codeErrorLimitReached {
 				codesToRemove = append(codesToRemove, code)
 			}
 			results = append(results, RegistrationResult{Code: code, Message: result.Error()})

@@ -202,7 +202,7 @@ func (h *GiftCodeHandler) handleRegisterPlayer(s *discordgo.Session, i *discordg
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), codeProcessingTimeout)
 	defer cancel()
 
 	options = options[0].Options

@@ -96,37 +96,6 @@ func formatRedemptionReport(code string, playerCount int, results []string) stri
 	)
 }
 
-// formatRegisterResult formats a RegisterResult as a Discord-ready message string.
-func formatRegisterResult(r kingshot.RegisterResult) string {
-	switch {
-	case r.APIError != nil:
-		return "Error validating player ID. Please try again later."
-	case r.InvalidPlayer:
-		return "Invalid player ID provided."
-	case r.StoreError != nil:
-		return "Error registering player ID."
-	case r.AlreadySelf:
-		return "This player ID is already registered to your Discord account."
-	case r.AlreadyOther:
-		return "This player ID is already registered to another Discord account."
-	case r.MaxPlayersForKingdomReached:
-		return "You have already registered the maximum number of players for this kingdom."
-	}
-
-	response := fmt.Sprintf(
-		"**Registration Successful!**\n**Your player ID *%s* has been registered successfully!**",
-		r.PlayerID,
-	)
-	if len(r.CodeResults) > 0 {
-		lines := make([]string, 0, len(r.CodeResults))
-		for _, cr := range r.CodeResults {
-			lines = append(lines, fmt.Sprintf("`%s`: %s", cr.Code, cr.Message))
-		}
-		response += "\n\n**Gift Code Redemption Results:**\n" + strings.Join(lines, "\n")
-	}
-	return response
-}
-
 // chunkMessage splits s into slices of at most maxLen characters, breaking on
 // newline boundaries where possible.
 func chunkMessage(s string, maxLen int) []string {

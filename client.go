@@ -59,7 +59,11 @@ type Client struct {
 // NewClient creates a new Client with a rate limit of 1 request every 2 seconds, determined by the Kingshot API's x-rate-limit header.
 // The client has an arbitrary 10-second timeout for requests, which seems reasonable.
 // We may later take these values as parameters to make future changes easier.
-func NewClient() *Client {
+// A nil logger falls back to slog.Default().
+func NewClient(logger *slog.Logger) *Client {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	limiter := rate.NewLimiter(rate.Limit(rate.Every(2*time.Second)), 1)
 	return &Client{
 		Client: &http.Client{
@@ -68,7 +72,7 @@ func NewClient() *Client {
 		},
 		redeemURL:  defaultRedeemURL, // TODO: Make this configurable for testing purposes, or if the API endpoint changes in the future.
 		signingKey: Key,              // TODO: Make this configurable for testing purposes, or if the signing key changes in the future.
-		logger:     slog.Default(),   // TODO: Take a child logger as a parameter to allow for structured logging with context.
+		logger:     logger,
 	}
 }
 

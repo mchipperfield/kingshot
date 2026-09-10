@@ -62,7 +62,7 @@ func main() {
 	playerStore := firestore.NewPlayerStore(client)
 	codeStore := firestore.NewCodeStore(client)
 
-	svc := kingshot.NewService(playerStore, codeStore)
+	svc := kingshot.NewService(playerStore, codeStore, slog.Default())
 
 	allianceStore := firestore.NewAllianceStore(client)
 	giftCodeHandler := discord.NewGiftCodeHandler(svc, allianceStore)

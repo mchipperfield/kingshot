@@ -293,6 +293,7 @@ func TestInterpretRedeemResult(t *testing.T) {
 		{ErrCodeExpired, "This code has expired.", codeErrorExpired},
 		{ErrCodeNotFound, "This code is invalid.", codeErrorInvalid},
 		{ErrCodeLogin, "The player used to validate this code is invalid.", codeErrorLogin},
+		{ErrCodeUnknownPlayer, "This player's details are invalid.", codeErrorLogin},
 		{ErrCodeLimitReached, "Redemption limit reached.", codeErrorLimitReached},
 		{"99999", "Failed to redeem code.", codeErrorUnknown},
 	}
@@ -571,37 +572,32 @@ func TestGiftCodeService_TransferPlayer(t *testing.T) {
 		}
 	})
 
-	t.Run("player not found, registers new player", func(t *testing.T) {
+	t.Run("player not found is rejected", func(t *testing.T) {
 		store := newMapStore(nil)
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
-		player, err := svc.TransferPlayer(t.Context(), req)
-		if err != nil {
-			t.Fatalf("expected nil error, got %+v", err)
+		_, err := svc.TransferPlayer(t.Context(), req)
+		if !errors.Is(err, ErrPlayerNotRegistered) {
+			t.Fatalf("expected ErrPlayerNotRegistered, got %+v", err)
 		}
-		if player == nil {
-			t.Fatalf("expected player object,got  %+v", player)
-		}
+		assertPlayerError(t, err, "This player is not registered. Use /player register to register it first.")
 
-		if p, err := store.FindByPlayerID(t.Context(), "p1"); err != nil || p.UserID != "u1" || p.GuildID != "g1" || p.KingdomID != "k1" {
-			t.Errorf("player not added to store correctly")
+		if _, err := store.FindByPlayerID(t.Context(), "p1"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("player should not have been added to the store")
 		}
 	})
 
-	t.Run("blank owner also registers new player", func(t *testing.T) {
+	t.Run("blank owner is rejected", func(t *testing.T) {
 		store := newMapStore(map[string]*Player{
 			"p1": {PlayerID: "p1", UserID: "", KingdomID: "k0", GuildID: "g0"},
 		})
 		svc := &GiftCodeService{codeStore: newInMemoryCodeStore(), store: store, client: nil}
 		req := TransferPlayerRequest{PlayerID: "p1", UserID: "u1", NewKingdomID: "k1", GuildID: "g1"}
-		player, _ := svc.TransferPlayer(t.Context(), req)
-		if player == nil {
-			t.Fatalf("expected player object, got %+v", player)
+		_, err := svc.TransferPlayer(t.Context(), req)
+		if !errors.Is(err, ErrPlayerNotRegistered) {
+			t.Fatalf("expected ErrPlayerNotRegistered, got %+v", err)
 		}
-		p, err := store.FindByPlayerID(t.Context(), "p1")
-		if err != nil || p.UserID != "u1" || p.KingdomID != "k1" || p.GuildID != "g1" {
-			t.Errorf("player not re-registered correctly: err=%v player=%+v", err, p)
-		}
+		assertPlayerError(t, err, "This player is not registered. Use /player register to register it first.")
 	})
 
 	t.Run("not your player", func(t *testing.T) {

@@ -16,15 +16,21 @@ type GiftCodeService struct {
 	codeStore CodeStore
 	store     PlayerStore
 	client    *Client
+	logger    *slog.Logger
 }
 
 // NewService returns a GiftCodeService using the supplied PlayerStore
 // and CodeStore implementations, such as the Firestore-backed stores.
-func NewService(store PlayerStore, cs CodeStore) *GiftCodeService {
+// A nil logger falls back to slog.Default().
+func NewService(store PlayerStore, cs CodeStore, logger *slog.Logger) *GiftCodeService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &GiftCodeService{
 		store:     store,
 		codeStore: cs,
-		client:    NewClient(),
+		client:    NewClient(logger),
+		logger:    logger,
 	}
 }
 
@@ -53,7 +59,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*Red
 		if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
 			return nil, fmt.Errorf("code service: add code %s: %w", code, err)
 		}
-		slog.Info("code added with no registered players", "code", code)
+		s.logger.Info("code added with no registered players", "code", code)
 		return &RedeemResult{Code: code, Added: true}, nil
 	}
 
@@ -63,7 +69,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*Red
 		return nil, fmt.Errorf("code service: validate code %s: %w", code, err)
 	}
 
-	slog.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
+	s.logger.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
 
 	outcome := interpretRedeemResult(redeemResp)
 	if outcome != nil && outcome.kind == codeErrorExpired {
@@ -83,7 +89,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*Red
 	if err := s.codeStore.Add(ctx, Code{Value: code}); err != nil {
 		return nil, fmt.Errorf("code service: add code %s: %w", code, err)
 	}
-	slog.Info("code added", "code", code)
+	s.logger.Info("code added", "code", code)
 
 	results := make([]PlayerRedeemResult, 0, len(players))
 	firstPlayerMessage := "Successfully redeemed!"
@@ -180,7 +186,7 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 	}
 
 	if err := s.store.AddPlayer(ctx, req); err != nil {
-		slog.Error("failed to add player", "error", err)
+		s.logger.Error("failed to add player", "error", err)
 		return nil, err
 	}
 
@@ -191,20 +197,14 @@ func (s *GiftCodeService) addNewPlayer(ctx context.Context, req NewPlayerRequest
 		GuildID:   req.GuildID,
 	}
 
-	slog.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
+	s.logger.Info("user subscribed to bot", "player_id", req.PlayerID, "user_id", req.UserID)
 
 	redeemResults, err := s.redeemActiveCodes(ctx, player)
 	if err != nil {
-		return &RegisterResult{StoreError: err}, err
+		return nil, err
 	}
 	return &RegisterResult{
-		Success:     true,
-		PlayerID:    player.PlayerID,
-		KingdomID:   player.KingdomID,
-		UserID:      player.UserID,
-		GuildID:     player.GuildID,
-		StoreError:  err,
-		APIError:    err,
+		Player:      *player,
 		CodeResults: redeemResults,
 	}, nil
 }
@@ -213,6 +213,7 @@ var (
 	ErrAlreadyInKingdom     = errors.New("player already in kingdom")
 	ErrMaxPlayersForKingdom = errors.New("max players for kingdom reached")
 	NotYourPlayer           = errors.New("not your player")
+	ErrPlayerNotRegistered  = errors.New("player not registered")
 )
 
 // TransferPlayerRequest is the input to the TransferPlayer service method.
@@ -223,10 +224,9 @@ type TransferPlayerRequest struct {
 	GuildID      string
 }
 
-// TransferPlayer transfers req.PlayerID to req.NewKingdomID, or registers the
-// player if not already known. ctx bounds all store and HTTP calls made while
-// processing req.
-func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayerRequest) (*TransferPlayerResult, error) {
+// TransferPlayer transfers req.PlayerID to req.NewKingdomID. ctx bounds all
+// store calls made while processing req.
+func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayerRequest) (*Player, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -235,29 +235,10 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 		return nil, err
 	}
 
-	// Treat a blank owner as unowned so a previously unlinked player can be
-	// reclaimed even if the lookup surfaces the document.
+	// Treat a blank owner as unowned so an unregistered or previously
+	// unlinked player is rejected rather than silently reclaimed.
 	if errors.Is(err, ErrNotFound) || player.UserID == "" {
-		// Player doesn't exist, so let's register them instead.
-		registerReq := NewPlayerRequest{
-			PlayerID:  req.PlayerID,
-			KingdomID: req.NewKingdomID,
-			UserID:    req.UserID,
-			GuildID:   req.GuildID,
-		}
-		regResult, err := s.addNewPlayer(ctx, registerReq)
-		if err != nil {
-			return nil, err
-		}
-		return &TransferPlayerResult{
-			Player: Player{
-				PlayerID:  regResult.PlayerID,
-				KingdomID: regResult.KingdomID,
-				UserID:    regResult.UserID,
-				GuildID:   regResult.GuildID,
-			},
-			RegistrationResult: nil,
-		}, nil
+		return nil, newPlayerError("This player is not registered. Use /player register to register it first.", ErrPlayerNotRegistered)
 	}
 
 	if player.UserID != req.UserID {
@@ -290,12 +271,11 @@ func (s *GiftCodeService) TransferPlayer(ctx context.Context, req TransferPlayer
 		return nil, fmt.Errorf("update player kingdom: %w", err)
 	}
 
-	return &TransferPlayerResult{
-		Player: Player{
-			PlayerID:  req.PlayerID,
-			KingdomID: req.NewKingdomID,
-			UserID:    req.UserID,
-		},
+	return &Player{
+		PlayerID:  req.PlayerID,
+		KingdomID: req.NewKingdomID,
+		UserID:    req.UserID,
+		GuildID:   req.GuildID,
 	}, nil
 }
 
@@ -381,6 +361,8 @@ func interpretRedeemResult(resp *redeemResponse) *CodeError {
 		return newCodeError("This code is invalid.", codeErrorInvalid, resp)
 	case ErrCodeLogin:
 		return newCodeError("The player used to validate this code is invalid.", codeErrorLogin, resp)
+	case ErrCodeUnknownPlayer:
+		return newCodeError("This player's details are invalid.", codeErrorLogin, resp)
 	case ErrCodeLimitReached:
 		return newCodeError("Redemption limit reached.", codeErrorLimitReached, resp)
 	default:

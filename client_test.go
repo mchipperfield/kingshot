@@ -24,9 +24,10 @@ func TestClientRedeemGiftCodeRetriesAfterError(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := &Client{
-		Client:    server.Client(),
-		redeemURL: server.URL,
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Client:     server.Client(),
+		redeemURL:  server.URL,
+		signingKey: Key,
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	response, err := client.redeemGiftCode(context.Background(), "player", "kingdom", "code")
@@ -50,9 +51,10 @@ func TestClientRedeemGiftCodeReturnsExhaustedAfterThreeErrors(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := &Client{
-		Client:    server.Client(),
-		redeemURL: server.URL,
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Client:     server.Client(),
+		redeemURL:  server.URL,
+		signingKey: Key,
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	response, err := client.redeemGiftCode(context.Background(), "player", "kingdom", "code")

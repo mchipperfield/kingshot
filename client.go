@@ -96,7 +96,7 @@ func (c *Client) redeemGiftCode(ctx context.Context, playerID, kingdomID, cdk st
 		"cdk":  cdk,
 		"time": fmt.Sprintf("%d", time.Now().Unix()),
 	}
-	payload, err := encodePayload(data)
+	payload, err := c.encodePayload(data)
 	if err != nil {
 		return nil, err
 	}
@@ -159,14 +159,14 @@ func (c *Client) redeem(ctx context.Context, payload string) (*redeemResponse, e
 
 // encodePayload encodes the data map into a signed JSON payload for the
 // KingShot API. It adds a "sign" field to data as a side effect.
-func encodePayload(data map[string]string) (string, error) {
+func (c *Client) encodePayload(data map[string]string) (string, error) {
 	values := url.Values{}
 	for key, value := range data {
 		values.Set(key, value)
 	}
 
 	hasher := md5.New()
-	hasher.Write([]byte(values.Encode() + Key))
+	hasher.Write([]byte(values.Encode() + c.signingKey))
 	data["sign"] = hex.EncodeToString(hasher.Sum(nil))
 
 	payload, err := json.Marshal(data)

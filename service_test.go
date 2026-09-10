@@ -173,15 +173,17 @@ func mockKingShotAPI(t *testing.T, redeemErrCode string) *GiftCodeService {
 
 // --- API type tests ----------------------------------------------------------
 
-// TestEncodePayload verifies that EncodePayload produces a deterministic
+// TestClientEncodePayload verifies that Client.encodePayload produces a deterministic
 // JSON payload that contains a "sign" field and that the signature is correct.
-func TestEncodePayload(t *testing.T) {
+func TestClientEncodePayload(t *testing.T) {
+	client := &Client{signingKey: Key}
+
 	t.Run("adds sign field", func(t *testing.T) {
 		data := map[string]string{
 			"fid":  "12345",
 			"time": "1700000000",
 		}
-		payload, err := encodePayload(data)
+		payload, err := client.encodePayload(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -203,11 +205,11 @@ func TestEncodePayload(t *testing.T) {
 		data1 := map[string]string{"fid": "abc", "time": "999"}
 		data2 := map[string]string{"fid": "abc", "time": "999"}
 
-		p1, err := encodePayload(data1)
+		p1, err := client.encodePayload(data1)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		p2, err := encodePayload(data2)
+		p2, err := client.encodePayload(data2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -225,8 +227,8 @@ func TestEncodePayload(t *testing.T) {
 		d1 := map[string]string{"fid": "player1", "time": "1000"}
 		d2 := map[string]string{"fid": "player2", "time": "1000"}
 
-		p1, _ := encodePayload(d1)
-		p2, _ := encodePayload(d2)
+		p1, _ := client.encodePayload(d1)
+		p2, _ := client.encodePayload(d2)
 
 		var r1, r2 map[string]string
 		json.Unmarshal([]byte(p1), &r1)
@@ -250,7 +252,7 @@ func TestEncodePayload(t *testing.T) {
 		dataToHash := values.Encode() + Key
 
 		dataCopy := map[string]string{"fid": "testplayer", "time": "1700000000"}
-		payload, err := encodePayload(dataCopy)
+		payload, err := client.encodePayload(dataCopy)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -8,10 +8,10 @@ import (
 
 // Player holds all the information for a given player
 type Player struct {
-	PlayerID  string `firestore:"playerID"`
-	UserID    string `firestore:"userID"`
-	KingdomID string `firestore:"kingdomID"`
-	GuildID   string `firestore:"guildID"`
+	PlayerID  string
+	UserID    string
+	KingdomID string
+	GuildID   string
 }
 
 // PlayerStore manages persistent storage of registered players.

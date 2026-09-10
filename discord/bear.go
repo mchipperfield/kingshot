@@ -132,31 +132,32 @@ func (h *BearHandler) Handle(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
-	switch i.Interaction.Type {
-	case discordgo.InteractionApplicationCommand:
-		command := i.ApplicationCommandData()
-		if len(command.Options) == 0 {
-			slog.Error("received application command without options", "command", command.Name)
-			return
-		}
-		if command.Name != "bear" {
-			return
-		}
+	if i.Type != discordgo.InteractionApplicationCommand {
+		return
+	}
 
-		subcommand := command.Options[0]
-		switch subcommand.Name {
-		case "status":
-			h.bearStatus(s, i)
-		case "set":
-			PermissionMw(h.store)(h.bearSet)(s, i)
-		case "disable":
-			PermissionMw(h.store)(h.bearDisable)(s, i)
-		case "channel":
-			PermissionMw(h.store)(h.bearChannel)(s, i)
-		default:
-			slog.Warn("unrecognised bear subcommand", "subcommand", subcommand.Name)
-			reply(s, i, fmt.Sprintf("Unrecognised bear subcommand %q", subcommand.Name))
-		}
+	command := i.ApplicationCommandData()
+	if len(command.Options) == 0 {
+		slog.Error("received application command without options", "command", command.Name)
+		return
+	}
+	if command.Name != "bear" {
+		return
+	}
+
+	subcommand := command.Options[0]
+	switch subcommand.Name {
+	case "status":
+		h.bearStatus(s, i)
+	case "set":
+		PermissionMw(h.store)(h.bearSet)(s, i)
+	case "disable":
+		PermissionMw(h.store)(h.bearDisable)(s, i)
+	case "channel":
+		PermissionMw(h.store)(h.bearChannel)(s, i)
+	default:
+		slog.Warn("unrecognised bear subcommand", "subcommand", subcommand.Name)
+		reply(s, i, fmt.Sprintf("Unrecognised bear subcommand %q", subcommand.Name))
 	}
 
 }

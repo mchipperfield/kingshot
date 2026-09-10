@@ -58,6 +58,18 @@ func TestInteractionHandler_IgnoresNonAppCommand(t *testing.T) {
 	})
 }
 
+func TestBearHandlerIgnoresMessageComponents(t *testing.T) {
+	h := NewBearHandler(nil, nil)
+	h.Handle(nil, &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			Type: discordgo.InteractionMessageComponent,
+			Data: discordgo.MessageComponentInteractionData{
+				CustomID: "player-unlink-confirm:player-1",
+			},
+		},
+	})
+}
+
 // TestInteractionHandler_IgnoresUnknownCommand verifies that the interaction
 // handler silently ignores unrecognised slash command names.
 func TestInteractionHandler_IgnoresUnknownCommand(t *testing.T) {

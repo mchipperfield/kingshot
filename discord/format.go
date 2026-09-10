@@ -165,7 +165,7 @@ func bearStatusEmbed(status *kingshot.BearStatus, description, setBy string) *di
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    "Goaf's Herald",
 			IconURL: thumbnailURL,
-			URL:     thumbnailURL,
+			URL:     supportURL,
 		},
 		Fields: []*discordgo.MessageEmbedField{
 			{

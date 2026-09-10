@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
@@ -252,5 +253,19 @@ func TestRedemptionEmbedsBatchesPlayers(t *testing.T) {
 		if embed.Author.URL != supportURL {
 			t.Errorf("embed %d Author.URL = %q, want %q", index, embed.Author.URL, supportURL)
 		}
+	}
+}
+
+func TestBearStatusEmbedAuthorURL(t *testing.T) {
+	embed := bearStatusEmbed(&kingshot.BearStatus{
+		Bear: "1",
+		Next: time.Now().Add(time.Hour),
+	}, "Bear trap configured", "user")
+
+	if embed.Author == nil {
+		t.Fatalf("Author is nil, want support URL %q", supportURL)
+	}
+	if embed.Author.URL != supportURL {
+		t.Errorf("Author.URL = %q, want %q", embed.Author.URL, supportURL)
 	}
 }

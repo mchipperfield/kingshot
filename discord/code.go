@@ -308,13 +308,14 @@ func (h *GiftCodeHandler) handlePlayerStatus(s *discordgo.Session, i *discordgo.
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    "Goaf's Herald",
 			IconURL: thumbnailURL,
+			URL:     supportURL,
 		},
 	}
 	for _, player := range players {
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
 			Name:   fmt.Sprintf("Player %s", player.PlayerID),
 			Value:  fmt.Sprintf("Kingdom ID: %s", player.KingdomID),
-			Inline: true,
+			Inline: false,
 		})
 	}
 

@@ -181,5 +181,8 @@ func (ps *PlayerStore) UnlinkPlayer(ctx context.Context, req kingshot.UnlinkPlay
 		{Path: "is_active", Value: false},
 		{Path: "history", Value: firestore.ArrayUnion(entry)},
 	})
-	return fmt.Errorf("firestore: update player document %s: %w", req.PlayerID, err)
+	if err != nil {
+		return fmt.Errorf("firestore: update player document %s: %w", req.PlayerID, err)
+	}
+	return nil
 }

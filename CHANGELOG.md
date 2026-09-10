@@ -4,15 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-### Fixed
-
-- Made VM deployment handle both directory and full-file destination paths and verify that `kingshot.service` runs the deployed executable.
-
 ## [0.2.3] - 2026-09-10
 
 ### Fixed
 
 - Prevented unlink confirmation interactions from being treated as application commands by unrelated handlers.
+- Made VM deployment handle both directory and full-file destination paths and verify that `kingshot.service` runs the deployed executable.
+- Fixed successful player unlink operations being reported as Firestore errors.
 
 ## [0.2.2] - 2026-09-10
 

@@ -36,7 +36,7 @@ func (s *recordingBearStore) GetBearStatus(_ context.Context, guildID, bearID st
 	return &status, nil
 }
 
-func (s *recordingBearStore) SetBear(_ context.Context, guildID, bearID string, setTime time.Time, setBy string) error {
+func (s *recordingBearStore) SetBear(_ context.Context, guildID, bearID string, setTime time.Time, setBy string, reminderLeadTime time.Duration) error {
 	s.setCalls++
 	s.lastSetGuildID = guildID
 	s.lastSetBearID = bearID
@@ -49,6 +49,7 @@ func (s *recordingBearStore) SetBear(_ context.Context, guildID, bearID string, 
 		SetBy:            setBy,
 		Next:             setTime,
 		RemindersEnabled: true,
+		ReminderLeadTime: reminderLeadTime,
 	}
 	return nil
 }
@@ -123,7 +124,7 @@ func TestBearStoreSetBearWritesThroughAndUpdatesCache(t *testing.T) {
 	store := NewBearStore(backingStore)
 	setTime := time.Now().Add(time.Hour)
 
-	if err := store.SetBear(context.Background(), "guild-1", "2", setTime, "user-1"); err != nil {
+	if err := store.SetBear(context.Background(), "guild-1", "2", setTime, "user-1", kingshot.DefaultReminderLeadTime); err != nil {
 		t.Fatalf("SetBear() error = %v", err)
 	}
 

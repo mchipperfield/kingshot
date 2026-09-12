@@ -54,8 +54,8 @@ func (s *BearStore) GetBearStatus(ctx context.Context, guildId, bearID string) (
 	return status, nil
 }
 
-func (s *BearStore) SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string) error {
-	if err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy); err != nil {
+func (s *BearStore) SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string, reminderLeadTime time.Duration) error {
+	if err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy, reminderLeadTime); err != nil {
 		return err
 	}
 
@@ -69,6 +69,7 @@ func (s *BearStore) SetBear(ctx context.Context, guildId, bearID string, setTime
 			Next:             setTime,
 			GuildID:          guildId,
 			RemindersEnabled: true,
+			ReminderLeadTime: reminderLeadTime,
 		},
 		expiresAt: now.Add(s.ttl),
 	}

@@ -23,14 +23,15 @@ func NewBearStore(client *firestore.Client) *BearStore {
 }
 
 type bear struct {
-	Bear             string    `firestore:"bear"`
-	GuildID          string    `firestore:"guild_id"`
-	SetBy            string    `firestore:"set_by"`
-	SetAt            time.Time `firestore:"set_at"`
-	Next             time.Time `firestore:"next"`
-	RemindersEnabled bool      `firestore:"reminders_enabled"`
-	CreatedAt        time.Time `firestore:"created_at"`
-	UpdatedAt        time.Time `firestore:"updated_at"`
+	Bear             string        `firestore:"bear"`
+	GuildID          string        `firestore:"guild_id"`
+	SetBy            string        `firestore:"set_by"`
+	SetAt            time.Time     `firestore:"set_at"`
+	Next             time.Time     `firestore:"next"`
+	RemindersEnabled bool          `firestore:"reminders_enabled"`
+	ReminderLeadTime time.Duration `firestore:"reminder_lead_time"`
+	CreatedAt        time.Time     `firestore:"created_at"`
+	UpdatedAt        time.Time     `firestore:"updated_at"`
 }
 
 func (s *BearStore) GetBearStatus(ctx context.Context, guildId string, bearID string) (*kingshot.BearStatus, error) {
@@ -55,10 +56,11 @@ func (s *BearStore) GetBearStatus(ctx context.Context, guildId string, bearID st
 		Bear:             b.Bear,
 		GuildID:          b.GuildID,
 		RemindersEnabled: b.RemindersEnabled,
+		ReminderLeadTime: b.ReminderLeadTime,
 	}, nil
 }
 
-func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, setTime time.Time, setBy string) error {
+func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, setTime time.Time, setBy string, reminderLeadTime time.Duration) error {
 	docRef := s.client.Collection("alliances").Doc(guildId).Collection("bears").Doc(bearID)
 	now := time.Now().UTC()
 	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
@@ -74,6 +76,7 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 				SetAt:            now,
 				Next:             setTime,
 				RemindersEnabled: true,
+				ReminderLeadTime: reminderLeadTime,
 				CreatedAt:        now,
 				UpdatedAt:        now,
 			}
@@ -88,6 +91,7 @@ func (s *BearStore) SetBear(ctx context.Context, guildId string, bearID string, 
 			{Path: "set_at", Value: now},
 			{Path: "next", Value: setTime},
 			{Path: "reminders_enabled", Value: true},
+			{Path: "reminder_lead_time", Value: reminderLeadTime},
 			{Path: "updated_at", Value: now},
 		}); err != nil {
 			return fmt.Errorf("firestore: update bear doc: %w", err)
@@ -173,6 +177,7 @@ func (s *BearStore) GetAllBearStatuses(ctx context.Context) ([]kingshot.BearStat
 			SetAt:            b.SetAt,
 			Next:             b.Next,
 			RemindersEnabled: b.RemindersEnabled,
+			ReminderLeadTime: b.ReminderLeadTime,
 		})
 	}
 	return bears, nil

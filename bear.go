@@ -38,6 +38,7 @@ type BearStatus struct {
 	Next             time.Time
 	GuildID          string
 	RemindersEnabled bool
+	ReminderLeadTime time.Duration
 }
 
 func (s BearStatus) Reminders() string {
@@ -51,17 +52,20 @@ func (s *BearService) GetBearStatus(ctx context.Context, guildId, bearID string)
 	return s.store.GetBearStatus(ctx, guildId, bearID)
 }
 
-func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string) error {
+func (s *BearService) SetBear(ctx context.Context, guildId, bearID string, setTime time.Time, setBy string, reminderLeadTime time.Duration) error {
 	if setTime.Before(time.Now()) {
 		return ErrSetTimeInPast
 	}
 	if bearID != "1" && bearID != "2" {
 		return ErrInvalidBear
 	}
+	if reminderLeadTime <= 0 || reminderLeadTime > bearInterval {
+		return ErrInvalidReminderLeadTime
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy)
+	err := s.store.SetBear(ctx, guildId, bearID, setTime, setBy, reminderLeadTime)
 	if err != nil {
 		return fmt.Errorf("kingshot: set bear: %w", err)
 	}
@@ -92,6 +96,10 @@ type Reminder struct {
 }
 
 const bearInterval time.Duration = 48 * time.Hour
+
+// DefaultReminderLeadTime is used for bears set before per-bear lead times
+// existed, and as the default when a caller doesn't specify one.
+const DefaultReminderLeadTime time.Duration = 30 * time.Minute
 
 // Start checks the store for due bear events every minute until ctx is canceled.
 func (s *BearService) Start(ctx context.Context) error {
@@ -138,7 +146,11 @@ func (s *BearService) tick(ctx context.Context, now time.Time) error {
 			status.Next = next
 			delete(s.sentReminders, key)
 		}
-		if status.Next.Sub(now) < time.Minute*30 && !s.sentReminders[key].Equal(status.Next) {
+		leadTime := status.ReminderLeadTime
+		if leadTime <= 0 {
+			leadTime = DefaultReminderLeadTime
+		}
+		if status.Next.Sub(now) < leadTime && !s.sentReminders[key].Equal(status.Next) {
 			reminder := Reminder{
 				BearID:  status.Bear,
 				GuildID: status.GuildID,

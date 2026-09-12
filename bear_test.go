@@ -22,14 +22,15 @@ func (s *memoryBearStore) GetBearStatus(_ context.Context, guildID, bearID strin
 	return &status, nil
 }
 
-func (s *memoryBearStore) SetBear(_ context.Context, guildID, bearID string, setTime time.Time, setBy string) error {
+func (s *memoryBearStore) SetBear(_ context.Context, guildID, bearID string, setTime time.Time, setBy string, reminderLeadTime time.Duration) error {
 	s.statuses[bearKey(guildID, bearID)] = BearStatus{
-		Bear:    bearID,
-		GuildID: guildID,
-		SetAt:   time.Now(),
-		SetBy:   setBy,
-		Next:    setTime,
+		Bear:             bearID,
+		GuildID:          guildID,
+		SetAt:            time.Now(),
+		SetBy:            setBy,
+		Next:             setTime,
 		RemindersEnabled: true,
+		ReminderLeadTime: reminderLeadTime,
 	}
 	return nil
 }
@@ -69,7 +70,7 @@ func TestBearServiceSetAndGetBearWithoutCache(t *testing.T) {
 	service := NewBearService(store, nil)
 	setTime := time.Now().Add(time.Hour)
 
-	if err := service.SetBear(context.Background(), "guild-1", "1", setTime, "user-1"); err != nil {
+	if err := service.SetBear(context.Background(), "guild-1", "1", setTime, "user-1", DefaultReminderLeadTime); err != nil {
 		t.Fatalf("SetBear() error = %v", err)
 	}
 

@@ -17,6 +17,12 @@ type BearHandler struct {
 	store kingshot.AllianceStore
 }
 
+// reminderMinutesMin/Max bound the "minutes-before" option: at least a
+// minute's notice, and no more than a full bear interval (48 hours).
+var reminderMinutesMin float64 = 1
+
+const reminderMinutesMax float64 = 48 * 60
+
 func NewBearHandler(svc *kingshot.BearService, store kingshot.AllianceStore) *BearHandler {
 	return &BearHandler{svc: svc, store: store}
 }
@@ -88,6 +94,14 @@ func (h *BearHandler) Commands() []*discordgo.ApplicationCommand {
 							Description:  "Time (UTC) of next bear trap (HH:MM, 24-hour format)",
 							Required:     true,
 							Autocomplete: false,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "minutes-before",
+							Description: "Minutes before the trap to send the reminder (default 30, max 2880)",
+							Required:    false,
+							MinValue:    &reminderMinutesMin,
+							MaxValue:    reminderMinutesMax,
 						},
 					},
 				},
@@ -244,6 +258,13 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 	timeStr := subcommand.Options[2].StringValue()
 	dateTime := strings.Join([]string{dateStr, timeStr}, " ")
 
+	reminderLeadTime := kingshot.DefaultReminderLeadTime
+	for _, opt := range subcommand.Options {
+		if opt.Name == "minutes-before" {
+			reminderLeadTime = time.Duration(opt.IntValue()) * time.Minute
+		}
+	}
+
 	setTime, err := time.Parse("2006-01-02 15:04", dateTime)
 	if err != nil {
 		slog.Info("failed to parse time", "error", err, "guild_id", i.GuildID, "trap_id", trapID, "time", timeStr)
@@ -253,7 +274,7 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	ctx, cancel := context.WithTimeout(context.Background(), serviceCallTimeout)
 	defer cancel()
-	err = h.svc.SetBear(ctx, i.GuildID, trapID, setTime, i.Member.User.ID)
+	err = h.svc.SetBear(ctx, i.GuildID, trapID, setTime, i.Member.User.ID, reminderLeadTime)
 	if err != nil {
 		if errors.Is(err, kingshot.ErrSetTimeInPast) {
 			reply(s, i, "The bear trap time must be in the future.")
@@ -261,6 +282,10 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 		}
 		if errors.Is(err, kingshot.ErrInvalidBear) {
 			reply(s, i, "Please select a valid bear trap. Valid options are 1 or 2.")
+			return
+		}
+		if errors.Is(err, kingshot.ErrInvalidReminderLeadTime) {
+			reply(s, i, "Reminder minutes must be between 1 and 2880 (48 hours).")
 			return
 		}
 		slog.Info("failed to set bear trap", "error", err, "guild_id", i.GuildID, "trap_id", trapID)
@@ -275,6 +300,7 @@ func (h *BearHandler) bearSet(s *discordgo.Session, i *discordgo.InteractionCrea
 		SetAt:            time.Now(),
 		Next:             setTime,
 		RemindersEnabled: true,
+		ReminderLeadTime: reminderLeadTime,
 	}
 	replyWithEmbed(s, i, bearStatusEmbed(status, "Bear trap configured", userName(s, status.SetBy)))
 }

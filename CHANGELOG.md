@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.3.0] - 2026-09-12
+
+### Added
+
+- Added a `minutes-before` option to `/bear set` for configuring how far in advance the reminder fires (default 30, max 2880 minutes).
+
 ## [0.2.3] - 2026-09-10
 
 ### Fixed

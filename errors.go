@@ -71,6 +71,7 @@ func (e *CodeError) Unwrap() error {
 
 // Errors returned by BearService.
 var (
-	ErrSetTimeInPast = errors.New("set time cannot be in the past")
-	ErrInvalidBear   = errors.New("invalid bear trap")
+	ErrSetTimeInPast           = errors.New("set time cannot be in the past")
+	ErrInvalidBear             = errors.New("invalid bear trap")
+	ErrInvalidReminderLeadTime = errors.New("reminder lead time must be greater than zero and no more than the time between events")
 )

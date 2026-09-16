@@ -3,7 +3,36 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
 )
+
+func TestWatchGatewayTimesOutAfterDisconnect(t *testing.T) {
+	status := make(chan bool)
+	unhealthy := watchGateway(status, 10*time.Millisecond)
+
+	status <- false
+	select {
+	case <-unhealthy:
+	case <-time.After(time.Second):
+		t.Fatal("watchGateway did not report a prolonged disconnect")
+	}
+}
+
+func TestWatchGatewayCancelsTimeoutAfterReconnect(t *testing.T) {
+	status := make(chan bool)
+	unhealthy := watchGateway(status, 20*time.Millisecond)
+
+	status <- false
+	status <- true
+	select {
+	case <-unhealthy:
+		t.Fatal("watchGateway reported an unhealthy gateway after reconnect")
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	status <- false
+	<-unhealthy
+}
 
 func TestParseActiveCodes(t *testing.T) {
 	t.Parallel()

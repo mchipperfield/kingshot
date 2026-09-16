@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/mchipperfield/kingshot"
@@ -76,6 +77,16 @@ func main() {
 	session.AddHandler(bearHandler.Handle)
 	session.AddHandler(accessHandler.Handle)
 	session.AddHandler(commandRegistry.HandleReady)
+	gatewayStatus := make(chan bool)
+	session.AddHandler(func(s *discordgo.Session, r *discordgo.Connect) {
+		logger.Log("discord session connected")
+		gatewayStatus <- true
+	})
+	session.AddHandler(func(s *discordgo.Session, r *discordgo.Disconnect) {
+		logger.Log("discord session disconnected")
+		gatewayStatus <- false
+	})
+	gatewayUnhealthy := watchGateway(gatewayStatus, 5*time.Minute)
 	// startReminders is called once when the bot is ready,
 	// and starts a goroutine to listen for reminders from the BearService and send them to the appropriate guild channels.
 	// Must be called only once, as discord sessions can disconnect and reconnect,
@@ -105,8 +116,46 @@ func main() {
 
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-stopChan
-	logger.Log("signal received", "signal", sig)
+	select {
+	case sig := <-stopChan:
+		logger.Log("signal received, shutting down", "signal", sig)
+	case <-gatewayUnhealthy:
+		logger.Log("discord gateway remained disconnected, shutting down")
+		cancel()
+		session.Close()
+		client.Close()
+		os.Exit(1)
+	}
+}
+
+func watchGateway(status <-chan bool, timeout time.Duration) <-chan struct{} {
+	unhealthy := make(chan struct{})
+	go func() {
+		var timer *time.Timer
+		var timeoutC <-chan time.Time
+
+		for {
+			select {
+			case connected := <-status:
+				if connected {
+					if timer != nil {
+						timer.Stop()
+					}
+					timer = nil
+					timeoutC = nil
+					continue
+				}
+				if timer == nil {
+					timer = time.NewTimer(timeout)
+					timeoutC = timer.C
+				}
+			case <-timeoutC:
+				close(unhealthy)
+				return
+			}
+		}
+	}()
+	return unhealthy
 }
 
 type logger struct {

@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.3.1] - 2026-09-16
+
+### Added
+
+- Added logging for Discord gateway connections and disconnections.
+
+### Fixed
+
+- Made the bot exit after the Discord gateway remains disconnected for five minutes, allowing systemd to restart a stuck session.
+
 ## [0.3.0] - 2026-09-12
 
 ### Added

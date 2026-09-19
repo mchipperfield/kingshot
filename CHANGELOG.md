@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.3.2] - 2022-09-19
+
+### Fixed
+
+- Kept gift codes active after a player has claimed them so they can be redeemed by subsequent players.
+- Continued redeeming gift codes for subsequent players when an earlier player has already claimed a code.
+
 ## [0.3.1] - 2026-09-16
 
 ### Added

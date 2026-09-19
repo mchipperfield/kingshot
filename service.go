@@ -88,7 +88,7 @@ func (s *GiftCodeService) ProcessNewCode(ctx context.Context, code string) (*Red
 	s.logger.Info("redeem response", "code", code, "err_code", redeemResp.ErrCode, "player_id", firstPlayer.PlayerID)
 
 	outcome := interpretRedeemResult(redeemResp)
-	if outcome != nil && (outcome.kind == codeErrorClaimed || outcome.kind == codeErrorExpired || outcome.kind == codeErrorInvalid || outcome.kind == codeErrorLimitReached) {
+	if outcome != nil && (outcome.kind == codeErrorExpired || outcome.kind == codeErrorInvalid || outcome.kind == codeErrorLimitReached) {
 		if err := s.codeStore.Add(ctx, Code{Value: code, ExpiredAt: time.Now()}); err != nil {
 			return nil, fmt.Errorf("code service: record inactive code %s: %w", code, err)
 		}
@@ -382,7 +382,7 @@ func (s *GiftCodeService) redeemActiveCodes(ctx context.Context, player *Player)
 
 		result := interpretRedeemResult(redeemResp)
 		if result != nil {
-			if result.kind == codeErrorClaimed || result.kind == codeErrorExpired || result.kind == codeErrorInvalid || result.kind == codeErrorLimitReached {
+			if result.kind == codeErrorExpired || result.kind == codeErrorInvalid || result.kind == codeErrorLimitReached {
 				codesToRemove = append(codesToRemove, code)
 			}
 			results = append(results, RegistrationResult{Code: code, Message: result.Error()})

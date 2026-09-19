@@ -450,20 +450,56 @@ func TestGiftCodeService_ProcessNewCode(t *testing.T) {
 		}
 	})
 
-	t.Run("claimed API response stores inactive code", func(t *testing.T) {
-		svc := mockKingShotAPI(t, ErrCodeClaimed)
-		svc.store = newMapStore(map[string]*Player{
-			"p1": {PlayerID: "p1", KingdomID: "k1"},
-		})
+	t.Run("claimed API response on first player still redeems remaining players", func(t *testing.T) {
+		var redeemCalls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if redeemCalls.Add(1) == 1 {
+				json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeClaimed})
+				return
+			}
+			json.NewEncoder(w).Encode(redeemResponse{ErrCode: ErrCodeSuccess})
+		}))
+		t.Cleanup(srv.Close)
+
+		svc := &GiftCodeService{
+			codeStore: newInMemoryCodeStore(),
+			client:    &Client{Client: srv.Client(), redeemURL: srv.URL + "/gift_code", logger: nil},
+			store: newMapStore(map[string]*Player{
+				"p1": {PlayerID: "p1", KingdomID: "k1", GuildID: "g1"},
+				"p2": {PlayerID: "p2", KingdomID: "k1", GuildID: "g2"},
+			}),
+			logger: slog.Default(),
+		}
 
 		result, err := svc.ProcessNewCode(t.Context(), "CLAIMED")
-		var codeErr *CodeError
-		if result != nil || !errors.As(err, &codeErr) {
-			t.Fatalf("got result=%+v err=%v, want CodeError", result, err)
+		if err != nil {
+			t.Fatalf("ProcessNewCode() error = %v", err)
 		}
+		if result == nil || !result.Added || len(result.PlayerResults) != 2 {
+			t.Fatalf("ProcessNewCode() result = %+v", result)
+		}
+
+		var claimedCount, successCount int
+		for _, playerResult := range result.PlayerResults {
+			switch playerResult.Message {
+			case "Code already claimed.":
+				claimedCount++
+			case "Successfully redeemed!":
+				successCount++
+			}
+		}
+		if claimedCount != 1 || successCount != 1 {
+			t.Fatalf("player results = %+v, want one claimed and one success", result.PlayerResults)
+		}
+
+		if gotCalls := redeemCalls.Load(); gotCalls != 2 {
+			t.Fatalf("redeem calls = %d, want 2", gotCalls)
+		}
+
 		code, found, _ := svc.codeStore.Find(t.Context(), "CLAIMED")
-		if !found || !code.IsExpired() {
-			t.Fatal("expected claimed code to be stored as inactive")
+		if !found || code.IsExpired() {
+			t.Fatal("expected claimed code to remain active")
 		}
 	})
 
@@ -553,6 +589,28 @@ func TestGiftCodeService_RegisterPlayerRemovesLimitReachedCodes(t *testing.T) {
 		t.Fatalf("ActiveCodes() error = %v", err)
 	} else if len(active) != 0 {
 		t.Fatalf("ActiveCodes() = %v, want no active codes", active)
+	}
+}
+
+func TestGiftCodeService_RegisterPlayerClaimedCodeStaysActive(t *testing.T) {
+	svc := mockKingShotAPI(t, ErrCodeClaimed)
+	svc.codeStore = newInMemoryCodeStore("CLAIMED")
+
+	result, err := svc.RegisterPlayer(t.Context(), NewPlayerRequest{
+		PlayerID:  "p1",
+		UserID:    "u1",
+		KingdomID: "k1",
+	})
+	if err != nil {
+		t.Fatalf("RegisterPlayer() error = %v", err)
+	}
+	if len(result.CodeResults) != 1 || result.CodeResults[0].Message != "Code already claimed." {
+		t.Fatalf("CodeResults = %+v, want single claimed result", result.CodeResults)
+	}
+	if active, err := svc.codeStore.ActiveCodes(t.Context()); err != nil {
+		t.Fatalf("ActiveCodes() error = %v", err)
+	} else if len(active) != 1 || active[0] != "CLAIMED" {
+		t.Fatalf("ActiveCodes() = %v, want [CLAIMED]", active)
 	}
 }
 
